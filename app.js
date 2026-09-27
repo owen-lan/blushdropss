@@ -7,8 +7,7 @@ const CONFIG = {
   SPLITTER_ADDRESS: "0x0000000000000000000000000000000000000000",
 
   // ⬇️ PASTE YOUR GITHUB RELEASES DIRECT DOWNLOAD URL
-  MERKLE_URL: "https://github.com/YOUR_USERNAME/blushdrops/releases/download/v1/merkle.json",
-
+  MERKLE_URL: "https://github.com/owen-lan/blushdropss/releases/download/v1/merkle.json",
   // Public read-only RPCs (with fallback). No API key needed.
 RPC_URLS: [
   "https://eth-mainnet.g.alchemy.com/v2/AkH_F7btslPyNlLzxXJth",
