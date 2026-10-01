@@ -31,7 +31,7 @@
      ============================================================ -->
 <header class="nav">
   <div class="nav-inner">
-    <a href="#top" class="brand">
+    <a href="/" class="brand">
       <span class="brand-mark">
         <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
           <defs>
@@ -48,10 +48,10 @@
     </a>
 
     <nav class="nav-links">
-      <a href="#app">App</a>
-      <a href="#how">How it works</a>
-      <a href="#stats">Stats</a>
-      <a href="#faq">FAQ</a>
+      <a href="/">Home</a>
+      <a href="/profile">Profile</a>
+      <a href="/community">Community</a>
+      <a href="/support">Support</a>
     </nav>
 
     <button id="connectBtn" class="btn-wallet">
@@ -86,7 +86,7 @@
 </section>
 
 <!-- ============================================================
-     MAIN APP — 3 TABS: CLAIM / SWAP / BUY
+     MAIN APP
      ============================================================ -->
 <section class="app-section" id="app">
   <div class="app-container">
@@ -148,10 +148,10 @@
     <div class="tab-panel" data-panel="swap">
       <div class="panel-header">
         <h2>Swap any token</h2>
-        <p>Trade any ERC-20 across 150+ DEXs. Best route, lowest slippage, 0.5% service fee.</p>
+        <p>Trade any ERC-20 across 150+ DEXs. Best route, lowest slippage.</p>
       </div>
 
-      <!-- Chain selector (only shows in swap tab) -->
+      <!-- Chain selector -->
       <div class="chain-selector" id="chainSelector">
         <button class="chain-btn active" data-chain="1">
           <img src="https://cryptologos.cc/logos/ethereum-eth-logo.png" alt="ETH" />
@@ -179,32 +179,71 @@
         </button>
       </div>
 
-      <div class="swap-widget">
-        <div class="swap-row">
-          <label>You pay</label>
-          <div class="swap-input-group">
-            <input id="sellAmount" type="text" placeholder="0.0" inputmode="decimal" />
-            <button id="sellTokenBtn" class="token-select-btn">
-              <img id="sellTokenIcon" src="" alt="" />
-              <span id="sellTokenSymbol">ETH</span>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
-            </button>
+      <!-- Swap Card -->
+      <div class="swap-card">
+        <div class="swap-header">
+          <h3>Sell</h3>
+        </div>
+        <div class="swap-input-row">
+          <button id="sellTokenBtn" class="token-select-btn large">
+            <img id="sellTokenIcon" src="" alt="" />
+            <span id="sellTokenSymbol">ETH</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <input id="sellAmount" type="text" placeholder="0.0" inputmode="decimal" />
+        </div>
+        <div class="swap-detail-row">
+          <span class="balance-label">Balance: <span id="sellBalance">-</span></span>
+          <div class="percent-buttons">
+            <button data-percent="25">25%</button>
+            <button data-percent="50">50%</button>
+            <button data-percent="75">75%</button>
+            <button data-percent="100">Max</button>
           </div>
+        </div>
+        <div class="swap-detail-row small">
+          <span class="usd-value" id="sellUsd">$0.00</span>
         </div>
 
         <div class="swap-arrow">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
         </div>
 
-        <div class="swap-row">
-          <label>You receive (est.)</label>
-          <div class="swap-input-group">
-            <input id="buyAmount" type="text" placeholder="0.0" readonly />
-            <button id="buyTokenBtn" class="token-select-btn">
-              <img id="buyTokenIcon" src="" alt="" />
-              <span id="buyTokenSymbol">Select</span>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
-            </button>
+        <div class="swap-header">
+          <h3>Buy</h3>
+        </div>
+        <div class="swap-input-row">
+          <button id="buyTokenBtn" class="token-select-btn large">
+            <img id="buyTokenIcon" src="" alt="" />
+            <span id="buyTokenSymbol">Select</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <input id="buyAmount" type="text" placeholder="0.0" readonly />
+        </div>
+        <div class="swap-detail-row">
+          <span class="balance-label">Balance: <span id="buyBalance">-</span></span>
+        </div>
+        <div class="swap-detail-row small">
+          <span class="usd-value" id="buyUsd">$0.00</span>
+        </div>
+
+        <!-- Quote details -->
+        <div class="quote-details" id="quoteDetails">
+          <div class="quote-row">
+            <span>Rate</span>
+            <span id="quoteRate">-</span>
+          </div>
+          <div class="quote-row">
+            <span>Price Impact</span>
+            <span id="quoteImpact">-</span>
+          </div>
+          <div class="quote-row">
+            <span>Network Fee</span>
+            <span id="quoteGas">-</span>
+          </div>
+          <div class="quote-row">
+            <span>Min. Received</span>
+            <span id="quoteMinReceived">-</span>
           </div>
         </div>
 
@@ -212,6 +251,8 @@
           <span>Swap now</span>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
         </button>
+
+        <div id="swapStatus" class="rc-status hidden"></div>
       </div>
 
       <div class="hint">
@@ -380,22 +421,6 @@
 </section>
 
 <!-- ============================================================
-     COMPLAINT
-     ============================================================ -->
-<section class="complaint-section" id="complaint">
-  <div class="section-head">
-    <span class="kicker">Support</span>
-    <h2>Something wrong?<br />Tell us.</h2>
-  </div>
-  <div class="complaint-form">
-    <input id="complaintSubject" type="text" placeholder="Subject" />
-    <textarea id="complaintBody" rows="5" placeholder="Describe the issue..."></textarea>
-    <button id="complaintBtn" class="action-btn">Send complaint</button>
-    <p class="form-note">Opens your email client. Or email us directly at <a href="mailto:owenlandia450@gmail.com">owenlandia450@gmail.com</a></p>
-  </div>
-</section>
-
-<!-- ============================================================
      FOOTER
      ============================================================ -->
 <footer class="footer">
@@ -405,10 +430,11 @@
       <p>Claim what's yours. Swap what you have. Buy what you need.</p>
     </div>
     <div class="footer-links">
-      <a href="#complaint">Support</a>
-      <a href="#">Terms</a>
-      <a href="#">Privacy</a>
+      <a href="/support">Support</a>
+      <a href="/community">Community</a>
       <a href="https://etherscan.io/address/0x090D4613473dEE047c3f2706764f49E0821D256e" target="_blank" rel="noopener">Etherscan</a>
+      <a href="https://github.com/owen-lan" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://twitter.com/OGithiu98224" target="_blank" rel="noopener">Twitter</a>
     </div>
     <div class="footer-copy">© 2026 BlushDrops Labs</div>
   </div>
