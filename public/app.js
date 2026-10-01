@@ -174,7 +174,9 @@ async function connectWithProvider(providerObj) {
     const input = document.getElementById("addressInput");
     if (input && !input.value.trim()) input.value = currentUser;
     closeWalletModal();
-
+    window.dispatchEvent(new CustomEvent("walletConnected", {
+      detail: { address: currentUser }
+    }));
     providerObj.on?.("accountsChanged", (accounts) => {
       if (!accounts || accounts.length === 0) { currentUser = null; if (btn) { btn.classList.remove("connected"); document.getElementById("connectText").textContent = "Connect"; } }
       else { currentUser = accounts[0]; if (btn) document.getElementById("connectText").textContent = currentUser.slice(0, 6) + "…" + currentUser.slice(-4); fetchBalances(); }
@@ -369,94 +371,89 @@ if (document.getElementById("tokenPickerClose")) document.getElementById("tokenP
 if (document.getElementById("tokenPickerBackdrop")) document.getElementById("tokenPickerBackdrop").addEventListener("click", closeTokenPicker);
 
 
-// ---------- BALANCE FETCHING (Multicall + Native + Prices) ----------
+// ---------- BALANCE FETCHING ----------
 async function fetchBalances() {
   if (!signer || !selectedSellToken || !selectedBuyToken) return;
-  const user = await signer.getAddress();
 
-  const multicall = new ethers.Contract(
-    MULTICALL_ADDRESS,
-    MULTICALL_ABI,
-    getReadProvider()
-  );
+  const sellBalEl = document.getElementById("sellBalance");
+  const buyBalEl = document.getElementById("buyBalance");
+  const sellUsdEl = document.getElementById("sellUsd");
+  const buyUsdEl = document.getElementById("buyUsd");
 
-  const iface = new ethers.utils.Interface(ERC20_ABI);
-  const NATIVE = WRAPPED_NATIVE.toLowerCase();
+  if (!sellBalEl) return; // not on swap page
 
-  const isSellNative = selectedSellToken.address.toLowerCase() === NATIVE;
-  const isBuyNative = selectedBuyToken.address.toLowerCase() === NATIVE;
-
-  // Build calls — native uses getEthBalance, ERC20 uses balanceOf
-  const calls = [
-    isSellNative
-      ? {
-          target: MULTICALL_ADDRESS,
-          allowFailure: true,
-          callData: multicall.interface.encodeFunctionData("getEthBalance", [user]),
-        }
-      : {
-          target: selectedSellToken.address,
-          allowFailure: true,
-          callData: iface.encodeFunctionData("balanceOf", [user]),
-        },
-    isBuyNative
-      ? {
-          target: MULTICALL_ADDRESS,
-          allowFailure: true,
-          callData: multicall.interface.encodeFunctionData("getEthBalance", [user]),
-        }
-      : {
-          target: selectedBuyToken.address,
-          allowFailure: true,
-          callData: iface.encodeFunctionData("balanceOf", [user]),
-        },
-  ];
+  // Show loading state
+  sellBalEl.textContent = "loading…";
+  buyBalEl.textContent = "loading…";
 
   try {
+    const user = await signer.getAddress();
+    const multicall = new ethers.Contract(MULTICALL_ADDRESS, MULTICALL_ABI, getReadProvider());
+    const iface = new ethers.utils.Interface(ERC20_ABI);
+    const NATIVE = WRAPPED_NATIVE.toLowerCase();
+
+    const isSellNative = selectedSellToken.address.toLowerCase() === NATIVE;
+    const isBuyNative = selectedBuyToken.address.toLowerCase() === NATIVE;
+
+    const calls = [
+      isSellNative
+        ? { target: MULTICALL_ADDRESS, allowFailure: true, callData: multicall.interface.encodeFunctionData("getEthBalance", [user]) }
+        : { target: selectedSellToken.address, allowFailure: true, callData: iface.encodeFunctionData("balanceOf", [user]) },
+      isBuyNative
+        ? { target: MULTICALL_ADDRESS, allowFailure: true, callData: multicall.interface.encodeFunctionData("getEthBalance", [user]) }
+        : { target: selectedBuyToken.address, allowFailure: true, callData: iface.encodeFunctionData("balanceOf", [user]) },
+    ];
+
     const results = await multicall.aggregate3(calls);
 
-    const prices = await fetchPrices(currentChainId, [
-      selectedSellToken.address,
-      selectedBuyToken.address,
-    ]);
-
-    // ---- Sell balance ----
+    // ---- Parse balances ----
     let sellBal = "0";
     if (results[0].success) {
-      const bal = ethers.BigNumber.from(results[0].returnData);
-      sellBal = ethers.utils.formatUnits(bal, selectedSellToken.decimals || 18);
+      sellBal = ethers.utils.formatUnits(
+        ethers.BigNumber.from(results[0].returnData),
+        selectedSellToken.decimals || 18
+      );
     }
-    const sellBalEl = document.getElementById("sellBalance");
-    if (sellBalEl) {
-      sellBalEl.textContent = `${parseFloat(sellBal).toFixed(6)} ${selectedSellToken.symbol}`;
-    }
-
-    // ---- Buy balance ----
     let buyBal = "0";
     if (results[1].success) {
-      const bal = ethers.BigNumber.from(results[1].returnData);
-      buyBal = ethers.utils.formatUnits(bal, selectedBuyToken.decimals || 18);
-    }
-    const buyBalEl = document.getElementById("buyBalance");
-    if (buyBalEl) {
-      buyBalEl.textContent = `${parseFloat(buyBal).toFixed(6)} ${selectedBuyToken.symbol}`;
+      buyBal = ethers.utils.formatUnits(
+        ethers.BigNumber.from(results[1].returnData),
+        selectedBuyToken.decimals || 18
+      );
     }
 
-    // ---- Update USD values under balances ----
-    const sellPrice = prices[selectedSellToken.address.toLowerCase()] || 0;
-    const buyPrice = prices[selectedBuyToken.address.toLowerCase()] || 0;
+    // ---- INSTANT: show token balances (no prices needed) ----
+    sellBalEl.textContent = `${parseFloat(sellBal).toFixed(6)} ${selectedSellToken.symbol}`;
+    buyBalEl.textContent = `${parseFloat(buyBal).toFixed(6)} ${selectedBuyToken.symbol}`;
 
-    const sellUsdEl = document.getElementById("sellUsd");
-    const buyUsdEl = document.getElementById("buyUsd");
+    // ---- ASYNC: fetch prices and update USD ----
+    fetchPrices(currentChainId, [selectedSellToken.address, selectedBuyToken.address])
+      .then(prices => {
+        const sellPrice = prices[selectedSellToken.address.toLowerCase()] || 0;
+        const buyPrice = prices[selectedBuyToken.address.toLowerCase()] || 0;
 
-    if (sellUsdEl) {
-      sellUsdEl.textContent = `$${(parseFloat(sellBal) * sellPrice).toFixed(2)}`;
-    }
-    if (buyUsdEl) {
-      buyUsdEl.textContent = `$${(parseFloat(buyBal) * buyPrice).toFixed(2)}`;
-    }
+        if (sellUsdEl) {
+          sellUsdEl.textContent = sellPrice
+            ? `$${(parseFloat(sellBal) * sellPrice).toFixed(2)}`
+            : "$0.00";
+        }
+        if (buyUsdEl) {
+          buyUsdEl.textContent = buyPrice
+            ? `$${(parseFloat(buyBal) * buyPrice).toFixed(2)}`
+            : "$0.00";
+        }
+      })
+      .catch(() => {
+        if (sellUsdEl) sellUsdEl.textContent = "$0.00";
+        if (buyUsdEl) buyUsdEl.textContent = "$0.00";
+      });
+
   } catch (e) {
     console.warn("Balance fetch failed:", e);
+    sellBalEl.textContent = "0 " + selectedSellToken.symbol;
+    buyBalEl.textContent = "0 " + selectedBuyToken.symbol;
+    if (sellUsdEl) sellUsdEl.textContent = "$0.00";
+    if (buyUsdEl) buyUsdEl.textContent = "$0.00";
   }
 }
 
@@ -485,7 +482,7 @@ document.querySelectorAll(".percent-buttons button").forEach(btn => {
 // ---------- LIVE PRICES (CoinGecko) ----------
 let priceCache = {};
 let priceCacheTime = 0;
-const PRICE_CACHE_TTL = 60_000; // 60 seconds
+const PRICE_CACHE_TTL = 60_000;
 
 async function fetchPrices(chainId, tokenAddresses) {
   const now = Date.now();
@@ -496,59 +493,56 @@ async function fetchPrices(chainId, tokenAddresses) {
   const platform = CHAINS[chainId]?.cgPlatform;
   if (!platform || !tokenAddresses.length) return priceCache;
 
-  try {
-    // Native token pricing uses coingecko's `simple/price` with coin IDs
-    // ERC-20 tokens use `simple/token_price/{platform}`
-    const nativeAddress = WRAPPED_NATIVE.toLowerCase();
-    const erc20s = tokenAddresses
-      .filter(a => a && a.toLowerCase() !== nativeAddress)
-      .map(a => a.toLowerCase());
-
-    const prices = {};
-
-    // ---- Native token price (via coin id) ----
-    const nativeTokenIds = {
-      1: "ethereum", 137: "matic-network", 8453: "ethereum",
-      42161: "ethereum", 10: "ethereum", 56: "binancecoin",
-    };
-    const nativeId = nativeTokenIds[chainId];
-    if (nativeId && tokenAddresses.some(a => a.toLowerCase() === nativeAddress)) {
-      try {
-        const r = await fetch(
-          `https://api.coingecko.com/api/v3/simple/price?ids=${nativeId}&vs_currencies=usd`,
-          { headers: { "x-cg-demo-api-key": CONFIG.COINGECKO_API_KEY } }
-        );
-        if (r.ok) {
-          const d = await r.json();
-          if (d[nativeId]?.usd) prices[nativeAddress] = d[nativeId].usd;
-        }
-      } catch (_) { /* silent */ }
-    }
-
-    // ---- ERC-20 prices (via contract address) ----
-    if (erc20s.length > 0) {
-      try {
-        const r = await fetch(
-          `https://api.coingecko.com/api/v3/simple/token_price/${platform}?contract_addresses=${erc20s.join(",")}&vs_currencies=usd`,
-          { headers: { "x-cg-demo-api-key": CONFIG.COINGECKO_API_KEY } }
-        );
-        if (r.ok) {
-          const d = await r.json();
-          for (const [addr, val] of Object.entries(d)) {
-            if (val?.usd) prices[addr.toLowerCase()] = val.usd;
-          }
-        }
-      } catch (_) { /* silent */ }
-    }
-
-    // Merge with previous cache so we don't lose stale values
-    priceCache = { ...priceCache, ...prices };
-    priceCacheTime = now;
-    return priceCache;
-  } catch (e) {
-    console.warn("Price fetch failed:", e);
-    return priceCache;
+  const headers = {};
+  if (CONFIG.COINGECKO_API_KEY && !CONFIG.COINGECKO_API_KEY.includes("YOUR")) {
+    headers["x-cg-demo-api-key"] = CONFIG.COINGECKO_API_KEY;
   }
+
+  const nativeAddress = WRAPPED_NATIVE.toLowerCase();
+  const erc20s = tokenAddresses
+    .filter(a => a && a.toLowerCase() !== nativeAddress)
+    .map(a => a.toLowerCase());
+
+  const prices = {};
+
+  // Native token price
+  const nativeTokenIds = {
+    1: "ethereum", 137: "matic-network", 8453: "ethereum",
+    42161: "ethereum", 10: "ethereum", 56: "binancecoin",
+  };
+  const nativeId = nativeTokenIds[chainId];
+  if (nativeId && tokenAddresses.some(a => a.toLowerCase() === nativeAddress)) {
+    try {
+      const r = await fetch(
+        `https://api.coingecko.com/api/v3/simple/price?ids=${nativeId}&vs_currencies=usd`,
+        { headers }
+      );
+      if (r.ok) {
+        const d = await r.json();
+        if (d[nativeId]?.usd) prices[nativeAddress] = d[nativeId].usd;
+      }
+    } catch (_) {}
+  }
+
+  // ERC-20 prices
+  if (erc20s.length > 0) {
+    try {
+      const r = await fetch(
+        `https://api.coingecko.com/api/v3/simple/token_price/${platform}?contract_addresses=${erc20s.join(",")}&vs_currencies=usd`,
+        { headers }
+      );
+      if (r.ok) {
+        const d = await r.json();
+        for (const [addr, val] of Object.entries(d)) {
+          if (val?.usd) prices[addr.toLowerCase()] = val.usd;
+        }
+      }
+    } catch (_) {}
+  }
+
+  priceCache = { ...priceCache, ...prices };
+  priceCacheTime = now;
+  return priceCache;
 }
 
 // ---------- 0x SWAP QUOTE ----------
@@ -826,5 +820,72 @@ const countObserver = new IntersectionObserver((entries) => {
 }, { threshold: 0.5 });
 document.querySelectorAll("[data-count]").forEach(el => countObserver.observe(el));
 
+// ---------- SILENT AUTO-RECONNECT ----------
+async function autoReconnect() {
+  if (!window.ethereum) return;
+  try {
+    // eth_accounts does NOT prompt — returns already-authorized accounts
+    const accounts = await window.ethereum.request({ method: "eth_accounts" });
+    if (!accounts || accounts.length === 0) return;
+
+    provider = new ethers.providers.Web3Provider(window.ethereum);
+    signer = provider.getSigner();
+    currentUser = accounts[0];
+
+    // Update nav UI
+    const btn = document.getElementById("connectBtn");
+    if (btn) {
+      btn.classList.add("connected");
+      const txt = document.getElementById("connectText");
+      if (txt) txt.textContent = currentUser.slice(0, 6) + "…" + currentUser.slice(-4);
+    }
+
+    // Prefill address input if on claim page
+    const input = document.getElementById("addressInput");
+    if (input && !input.value.trim()) input.value = currentUser;
+
+    // Sync chain
+    const net = await provider.getNetwork();
+    currentChainId = net.chainId;
+    document.querySelectorAll(".chain-btn").forEach(b => {
+      b.classList.toggle("active", parseInt(b.dataset.chain) === currentChainId);
+    });
+
+    // Refresh balances if we're on the swap page
+    if (document.getElementById("sellAmount")) {
+      await loadTokenList(currentChainId);
+      await fetchBalances();
+    }
+
+    // Notify other scripts (like profile.js)
+    window.dispatchEvent(new CustomEvent("walletConnected", {
+      detail: { address: currentUser }
+    }));
+
+    // Handle wallet events
+    window.ethereum.on?.("accountsChanged", (accts) => {
+      if (!accts || accts.length === 0) {
+        currentUser = null;
+        if (btn) { btn.classList.remove("connected"); document.getElementById("connectText").textContent = "Connect"; }
+      } else {
+        currentUser = accts[0];
+        if (btn) document.getElementById("connectText").textContent = currentUser.slice(0, 6) + "…" + currentUser.slice(-4);
+        fetchBalances();
+        window.dispatchEvent(new CustomEvent("walletConnected", { detail: { address: currentUser } }));
+      }
+    });
+
+    window.ethereum.on?.("chainChanged", () => window.location.reload());
+
+  } catch (e) {
+    console.warn("Auto-reconnect failed:", e);
+  }
+}
+
 // ---------- INIT ----------
-loadTokenList(1);
+window.addEventListener("load", async () => {
+  await autoReconnect();
+  if (!signer && document.getElementById("sellAmount")) {
+    loadTokenList(1); // cold start, no wallet — still load token list
+  }
+});
