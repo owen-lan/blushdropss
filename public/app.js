@@ -3,54 +3,39 @@
 // ============================================================
 
 const CONFIG = {
-  // ⬇️ Paste your deployed BlushSplitter contract address
   SPLITTER_ADDRESS: "0x0000000000000000000000000000000000000000",
-
-  // Alchemy RPC (Ethereum Mainnet)
-  RPC_URLS: [
-    "https://eth-mainnet.g.alchemy.com/v2/AkH_F7btslPyNlLzxXJth",
-  ],
-
-  // On-chain airdrop distributor
+  RPC_URLS: ["https://eth-mainnet.g.alchemy.com/v2/AkH_F7btslPyNlLzxXJth"],
   UNI_DISTRIBUTOR: "0x090D4613473dEE047c3f2706764f49E0821D256e",
 
   // 0x Swap API key (free at dashboard.0x.org)
   ZEROX_API_KEY: "8fc750e2-ebc9-4211-b32e-a035fcab239c",
   SWAP_FEE_RECIPIENT: "0xB1204D46fbc488a6606a00ce610e9Cad61483231",
-  SWAP_FEE_BPS: 50,
+  SWAP_FEE_BPS: 50, // 0.5%
 
   // Fiat on-ramp provider keys
   MOONPAY_API_KEY: "pk_live_YOUR_MOONPAY_KEY",
   TRANSAK_API_KEY: "YOUR_TRANSAK_API_KEY",
   FONBNK_API_KEY: "YOUR_FONBNK_API_KEY",
-
+  COINGECKO_API_KEY: "CG-HCeUwQTSz25aXFu6HmeKwFkN",  
   UNI_DECIMALS: 18,
   UNI_PRICE_USD: 8.5,
   USER_SHARE: 0.70,
 };
 
-const SPLITTER_ABI = [
-  "function claimAndSplit(uint256 index, address account, uint256 amount, bytes32[] calldata merkleProof) external"
-];
+const SPLITTER_ABI = ["function claimAndSplit(uint256 index, address account, uint256 amount, bytes32[] calldata merkleProof) external"];
+const IS_CLAIMED_ABI = ["function isClaimed(uint256 index) view returns (bool)"];
+const ERC20_ABI = ["function balanceOf(address) view returns (uint256)","function allowance(address,address) view returns (uint256)","function approve(address,uint256) returns (bool)","function decimals() view returns (uint8)"];
+const MULTICALL_ABI = ["function aggregate3((address target, bool allowFailure, bytes callData)[] calls) payable returns ((bool success, bytes returnData)[] returnData)"];
+const MULTICALL_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11";
 
-const IS_CLAIMED_ABI = [
-  "function isClaimed(uint256 index) view returns (bool)"
-];
-
-const ERC20_ABI = [
-  "function allowance(address,address) view returns (uint256)",
-  "function approve(address,uint256) returns (bool)"
-];
-
-// ---------- STATE ----------
 let provider, signer, currentUser;
 let readProvider = null;
 let currentChainId = 1;
 let allTokens = [];
 let selectedSellToken, selectedBuyToken;
 let pickerTarget = null;
+let currentQuote = null;
 
-// ---------- CHAINS ----------
 const CHAINS = {
   1:     { name: "Ethereum", cgPlatform: "ethereum",            native: { symbol: "ETH",  name: "Ethereum",  logo: "https://assets.coingecko.com/coins/images/279/small/ethereum.png" } },
   137:   { name: "Polygon",  cgPlatform: "polygon-pos",         native: { symbol: "MATIC", name: "Polygon",  logo: "https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png" } },
@@ -62,21 +47,15 @@ const CHAINS = {
 
 const WRAPPED_NATIVE = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 
-// ============================================================
-// CUSTOM CURSOR
-// ============================================================
+// ---------- CURSOR ----------
 const cursor = document.getElementById("cursor");
 const cursorDot = document.getElementById("cursorDot");
 document.addEventListener("mousemove", (e) => {
-  cursor.style.left = e.clientX + "px";
-  cursor.style.top = e.clientY + "px";
-  cursorDot.style.left = e.clientX + "px";
-  cursorDot.style.top = e.clientY + "px";
+  if (cursor) { cursor.style.left = e.clientX + "px"; cursor.style.top = e.clientY + "px"; }
+  if (cursorDot) { cursorDot.style.left = e.clientX + "px"; cursorDot.style.top = e.clientY + "px"; }
 });
 
-// ============================================================
-// TABS
-// ============================================================
+// ---------- TABS ----------
 document.querySelectorAll(".tab").forEach(tab => {
   tab.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
@@ -86,24 +65,18 @@ document.querySelectorAll(".tab").forEach(tab => {
   });
 });
 
-// ============================================================
-// READ-ONLY PROVIDER
-// ============================================================
+// ---------- READ PROVIDER ----------
 function getReadProvider() {
   if (readProvider) return readProvider;
   const providers = CONFIG.RPC_URLS.map((url, i) => ({
     provider: new ethers.providers.JsonRpcProvider(url),
-    priority: i + 1,
-    stallTimeout: 2500,
-    weight: 1,
+    priority: i + 1, stallTimeout: 2500, weight: 1,
   }));
   readProvider = new ethers.providers.FallbackProvider(providers, 1);
   return readProvider;
 }
 
-// ============================================================
-// ON-CHAIN CLAIMED CHECK
-// ============================================================
+// ---------- ON-CHAIN CLAIMED CHECK ----------
 async function checkOnChainClaimed(index) {
   try {
     const p = getReadProvider();
@@ -115,11 +88,8 @@ async function checkOnChainClaimed(index) {
   }
 }
 
-// ============================================================
-// WALLET DETECTION (EIP-6963 + legacy)
-// ============================================================
+// ---------- WALLET DETECTION ----------
 const detectedWallets = new Map();
-
 window.addEventListener("eip6963:announceProvider", (event) => {
   const { info, provider } = event.detail;
   detectedWallets.set(info.rdns, { info, provider });
@@ -130,20 +100,16 @@ window.dispatchEvent(new Event("eip6963:requestProvider"));
 function legacyDetect() {
   if (detectedWallets.size > 0) return;
   if (typeof window.ethereum === "undefined") return;
-
   const providers = window.ethereum.providers || [window.ethereum];
   const seen = new Set();
-
   providers.forEach((p) => {
     let name = null, rdns = null;
-    if (p.isBraveWallet)          { name = "Brave Wallet";    rdns = "com.brave.wallet"; }
-    else if (p.isRabby)           { name = "Rabby";           rdns = "io.rabby"; }
-    else if (p.isMetaMask)        { name = "MetaMask";        rdns = "io.metamask"; }
-    else if (p.isCoinbaseWallet)  { name = "Coinbase Wallet"; rdns = "com.coinbase.wallet"; }
-    else if (p.isTrust)           { name = "Trust Wallet";    rdns = "com.trustwallet.app"; }
-    else if (p.isOKXWallet)       { name = "OKX Wallet";      rdns = "com.okex.wallet"; }
-    else if (p.isBitKeep)         { name = "BitKeep";         rdns = "com.bitkeep.wallet"; }
-    else if (p.isFrame)           { name = "Frame";           rdns = "sh.frame"; }
+    if (p.isBraveWallet) { name = "Brave Wallet"; rdns = "com.brave.wallet"; }
+    else if (p.isRabby) { name = "Rabby"; rdns = "io.rabby"; }
+    else if (p.isMetaMask) { name = "MetaMask"; rdns = "io.metamask"; }
+    else if (p.isCoinbaseWallet) { name = "Coinbase Wallet"; rdns = "com.coinbase.wallet"; }
+    else if (p.isTrust) { name = "Trust Wallet"; rdns = "com.trustwallet.app"; }
+    else if (p.isOKXWallet) { name = "OKX Wallet"; rdns = "com.okex.wallet"; }
     if (!name || seen.has(rdns)) return;
     seen.add(rdns);
     detectedWallets.set(rdns, { info: { name, icon: null, rdns }, provider: p });
@@ -152,24 +118,15 @@ function legacyDetect() {
 }
 setTimeout(legacyDetect, 200);
 
-// ============================================================
-// WALLET MODAL
-// ============================================================
+// ---------- WALLET MODAL ----------
 const walletModal = document.getElementById("walletModal");
 const walletList = document.getElementById("walletList");
 const walletEmpty = document.getElementById("walletEmpty");
 
-function openWalletModal() {
-  walletModal.classList.remove("hidden");
-  document.body.style.overflow = "hidden";
-  refreshWalletList();
-}
-function closeWalletModal() {
-  walletModal.classList.add("hidden");
-  document.body.style.overflow = "";
-}
-document.getElementById("walletClose").addEventListener("click", closeWalletModal);
-document.getElementById("walletBackdrop").addEventListener("click", closeWalletModal);
+function openWalletModal() { walletModal.classList.remove("hidden"); document.body.style.overflow = "hidden"; refreshWalletList(); }
+function closeWalletModal() { walletModal.classList.add("hidden"); document.body.style.overflow = ""; }
+if (document.getElementById("walletClose")) document.getElementById("walletClose").addEventListener("click", closeWalletModal);
+if (document.getElementById("walletBackdrop")) document.getElementById("walletBackdrop").addEventListener("click", closeWalletModal);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeWalletModal(); });
 
 function colorForName(name) {
@@ -181,89 +138,45 @@ function colorForName(name) {
 
 function renderWalletItem(name, icon, providerObj) {
   const btn = document.createElement("button");
-  btn.className = "wallet-item";
-  btn.type = "button";
-  const iconHtml = icon
-    ? `<img src="${icon}" alt="${name}" />`
-    : (() => {
-        const [c1, c2] = colorForName(name);
-        return `<span class="wallet-letter" style="background:linear-gradient(135deg,${c1},${c2})">${name[0].toUpperCase()}</span>`;
-      })();
-  btn.innerHTML = `
-    <span class="wallet-item-icon">${iconHtml}</span>
-    <span class="wallet-item-info">
-      <span class="wallet-item-name">${name}</span>
-      <span class="wallet-item-tag">Browser extension</span>
-    </span>
-    <span class="wallet-item-arrow">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
-    </span>`;
+  btn.className = "wallet-item"; btn.type = "button";
+  const iconHtml = icon ? `<img src="${icon}" alt="${name}" />` : (() => { const [c1, c2] = colorForName(name); return `<span class="wallet-letter" style="background:linear-gradient(135deg,${c1},${c2})">${name[0].toUpperCase()}</span>`; })();
+  btn.innerHTML = `<span class="wallet-item-icon">${iconHtml}</span><span class="wallet-item-info"><span class="wallet-item-name">${name}</span><span class="wallet-item-tag">Browser extension</span></span><span class="wallet-item-arrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></span>`;
   btn.addEventListener("click", () => connectWithProvider(providerObj));
   return btn;
 }
-
 function refreshWalletList() {
+  if (!walletList) return;
   walletList.innerHTML = "";
-  if (detectedWallets.size === 0) {
-    walletList.classList.add("hidden");
-    walletEmpty.classList.remove("hidden");
-    return;
-  }
-  walletList.classList.remove("hidden");
-  walletEmpty.classList.add("hidden");
-  for (const { info, provider } of detectedWallets.values()) {
-    walletList.appendChild(renderWalletItem(info.name, info.icon, provider));
-  }
+  if (detectedWallets.size === 0) { walletList.classList.add("hidden"); walletEmpty.classList.remove("hidden"); return; }
+  walletList.classList.remove("hidden"); walletEmpty.classList.add("hidden");
+  for (const { info, provider } of detectedWallets.values()) walletList.appendChild(renderWalletItem(info.name, info.icon, provider));
 }
 
-// ============================================================
-// CONNECT WALLET
-// ============================================================
+// ---------- CONNECT WALLET ----------
 async function connectWithProvider(providerObj) {
   try {
     if (!providerObj) { alert("Wallet provider not available."); return; }
-
     provider = new ethers.providers.Web3Provider(providerObj);
     await provider.send("eth_requestAccounts", []);
     signer = provider.getSigner();
     currentUser = await signer.getAddress();
-
     const btn = document.getElementById("connectBtn");
-    btn.classList.add("connected");
-    document.getElementById("connectText").textContent =
-      currentUser.slice(0, 6) + "…" + currentUser.slice(-4);
-
+    if (btn) { btn.classList.add("connected"); document.getElementById("connectText").textContent = currentUser.slice(0, 6) + "…" + currentUser.slice(-4); }
     const input = document.getElementById("addressInput");
     if (input && !input.value.trim()) input.value = currentUser;
-
     closeWalletModal();
 
     providerObj.on?.("accountsChanged", (accounts) => {
-      if (!accounts || accounts.length === 0) {
-        currentUser = null;
-        btn.classList.remove("connected");
-        document.getElementById("connectText").textContent = "Connect";
-      } else {
-        currentUser = accounts[0];
-        document.getElementById("connectText").textContent =
-          currentUser.slice(0, 6) + "…" + currentUser.slice(-4);
-      }
+      if (!accounts || accounts.length === 0) { currentUser = null; if (btn) { btn.classList.remove("connected"); document.getElementById("connectText").textContent = "Connect"; } }
+      else { currentUser = accounts[0]; if (btn) document.getElementById("connectText").textContent = currentUser.slice(0, 6) + "…" + currentUser.slice(-4); fetchBalances(); }
     });
-
-    providerObj.on?.("chainChanged", (chainIdHex) => {
-      currentChainId = parseInt(chainIdHex, 16);
-      window.location.reload();
-    });
+    providerObj.on?.("chainChanged", (chainIdHex) => { currentChainId = parseInt(chainIdHex, 16); window.location.reload(); });
 
     const net = await provider.getNetwork();
     currentChainId = net.chainId;
-
-    // Update chain selector UI
-    document.querySelectorAll(".chain-btn").forEach(b => {
-      b.classList.toggle("active", parseInt(b.dataset.chain) === currentChainId);
-    });
+    document.querySelectorAll(".chain-btn").forEach(b => { b.classList.toggle("active", parseInt(b.dataset.chain) === currentChainId); });
     loadTokenList(currentChainId);
-
+    fetchBalances();
   } catch (err) {
     console.error(err);
     if (err.code === 4001) return;
@@ -271,52 +184,28 @@ async function connectWithProvider(providerObj) {
   }
 }
 
-document.getElementById("connectBtn").addEventListener("click", () => {
-  if (currentUser) {
-    navigator.clipboard?.writeText(currentUser);
-    const t = document.getElementById("connectText");
-    const orig = t.textContent;
-    t.textContent = "Copied!";
-    setTimeout(() => (t.textContent = orig), 1200);
-    return;
-  }
+if (document.getElementById("connectBtn")) document.getElementById("connectBtn").addEventListener("click", () => {
+  if (currentUser) { navigator.clipboard?.writeText(currentUser); const t = document.getElementById("connectText"); const orig = t.textContent; t.textContent = "Copied!"; setTimeout(() => (t.textContent = orig), 1200); return; }
   openWalletModal();
 });
 
-// ============================================================
-// CHAIN SELECTOR
-// ============================================================
+// ---------- CHAIN SELECTOR ----------
 document.querySelectorAll(".chain-btn").forEach(btn => {
   btn.addEventListener("click", async () => {
     document.querySelectorAll(".chain-btn").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
     const newChain = parseInt(btn.dataset.chain);
-
     if (signer) {
       try {
-        await window.ethereum.request({
-          method: "wallet_switchEthereumChain",
-          params: [{ chainId: "0x" + newChain.toString(16) }],
-        });
+        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x" + newChain.toString(16) }] });
         currentChainId = newChain;
-      } catch (e) {
-        console.warn("Chain switch failed:", e);
-        if (e.code === 4902) {
-          alert("Please add this network to your wallet first.");
-        }
-        return;
-      }
-    } else {
-      currentChainId = newChain;
-    }
-
-    loadTokenList(currentChainId);
+      } catch (e) { console.warn("Chain switch failed:", e); if (e.code === 4902) alert("Please add this network to your wallet first."); return; }
+    } else { currentChainId = newChain; }
+    loadTokenList(currentChainId); fetchBalances();
   });
 });
 
-// ============================================================
-// TOKEN LIST — full list from CoinGecko + base tokens
-// ============================================================
+// ---------- TOKEN LIST ----------
 const BASE_TOKENS = {
   1: [
     { symbol: "ETH",  name: "Ethereum",       address: WRAPPED_NATIVE, logo: "https://assets.coingecko.com/coins/images/279/small/ethereum.png", decimals: 18 },
@@ -363,42 +252,33 @@ const BASE_TOKENS = {
 async function loadTokenList(chainId) {
   const base = BASE_TOKENS[chainId] || [];
   allTokens = [...base];
-
-  // Set defaults if not set
-  if (!selectedSellToken || selectedSellToken.chainId !== chainId) {
-    selectedSellToken = { ...base[0], chainId };
-  }
-  if (!selectedBuyToken || selectedBuyToken.chainId !== chainId) {
-    selectedBuyToken = { ...base[1] || base[0], chainId };
-  }
+  if (!selectedSellToken || selectedSellToken.chainId !== chainId) selectedSellToken = { ...base[0], chainId };
+  if (!selectedBuyToken || selectedBuyToken.chainId !== chainId) selectedBuyToken = { ...(base[1] || base[0]), chainId };
   updateTokenUI();
 
   const platform = CHAINS[chainId]?.cgPlatform;
   if (!platform) return;
 
   try {
-    // CoinGecko's full token list endpoint — no API key required
     const res = await fetch(
-      `https://api.coingecko.com/api/v3/token_lists/${platform}/all.json`
+      `https://api.coingecko.com/api/v3/token_lists/${platform}/all.json`,
+      {
+        headers: {
+          "x-cg-pro-api-key": COINGECKO_API_KEY
+        }
+      }
     );
+
     if (!res.ok) throw new Error("CoinGecko HTTP " + res.status);
     const data = await res.json();
     const tokens = data.tokens || [];
-
     const seen = new Set(base.map(t => t.address.toLowerCase()));
     for (const t of tokens) {
       if (!t.address) continue;
       const addr = t.address.toLowerCase();
       if (seen.has(addr)) continue;
       seen.add(addr);
-      allTokens.push({
-        symbol: t.symbol || "?",
-        name: t.name || "Unknown",
-        address: t.address,
-        logo: t.logoURI || "",
-        decimals: t.decimals != null ? t.decimals : 18,
-        chainId,
-      });
+      allTokens.push({ symbol: t.symbol || "?", name: t.name || "Unknown", address: t.address, logo: t.logoURI || "", decimals: t.decimals != null ? t.decimals : 18, chainId });
     }
     console.log(`Loaded ${allTokens.length} tokens for chain ${chainId}`);
   } catch (e) {
@@ -409,115 +289,254 @@ async function loadTokenList(chainId) {
 
 function updateTokenUI() {
   if (selectedSellToken) {
-    document.getElementById("sellTokenSymbol").textContent = selectedSellToken.symbol;
-    const icon = document.getElementById("sellTokenIcon");
-    icon.src = selectedSellToken.logo || "";
-    icon.style.display = selectedSellToken.logo ? "" : "none";
+    const el = document.getElementById("sellTokenSymbol"); if (el) el.textContent = selectedSellToken.symbol;
+    const icon = document.getElementById("sellTokenIcon"); if (icon) { icon.src = selectedSellToken.logo || ""; icon.style.display = selectedSellToken.logo ? "" : "none"; }
   }
   if (selectedBuyToken) {
-    document.getElementById("buyTokenSymbol").textContent = selectedBuyToken.symbol;
-    const icon = document.getElementById("buyTokenIcon");
-    icon.src = selectedBuyToken.logo || "";
-    icon.style.display = selectedBuyToken.logo ? "" : "none";
+    const el = document.getElementById("buyTokenSymbol"); if (el) el.textContent = selectedBuyToken.symbol;
+    const icon = document.getElementById("buyTokenIcon"); if (icon) { icon.src = selectedBuyToken.logo || ""; icon.style.display = selectedBuyToken.logo ? "" : "none"; }
   }
 }
 
-// ============================================================
-// TOKEN PICKER
-// ============================================================
+// ---------- TOKEN PICKER ----------
 const tokenPicker = document.getElementById("tokenPicker");
-const tokenList = document.getElementById("tokenList");
+const tokenListEl = document.getElementById("tokenList");
 const tokenSearch = document.getElementById("tokenSearch");
 
-function openTokenPicker(target) {
-  pickerTarget = target;
-  tokenPicker.classList.remove("hidden");
-  tokenSearch.value = "";
-  renderTokenList(allTokens.slice(0, 50));
-  setTimeout(() => tokenSearch.focus(), 50);
-}
-
-function closeTokenPicker() {
-  tokenPicker.classList.add("hidden");
-}
-
+function openTokenPicker(target) { pickerTarget = target; tokenPicker.classList.remove("hidden"); tokenSearch.value = ""; renderTokenList(allTokens.slice(0, 50)); setTimeout(() => tokenSearch.focus(), 50); }
+function closeTokenPicker() { tokenPicker.classList.add("hidden"); }
 function renderTokenList(tokens) {
-  tokenList.innerHTML = "";
-  if (tokens.length === 0) {
-    tokenList.innerHTML = `<div class="token-empty">No tokens found</div>`;
-    return;
-  }
+  tokenListEl.innerHTML = "";
+  if (tokens.length === 0) { tokenListEl.innerHTML = `<div class="token-empty">No tokens found</div>`; return; }
   tokens.slice(0, 100).forEach(t => {
-    const item = document.createElement("button");
-    item.className = "token-list-item";
-    item.type = "button";
-    const logoHtml = t.logo
-      ? `<img src="${t.logo}" alt="" onerror="this.style.display='none'" />`
-      : `<img src="" style="display:none" />`;
-    item.innerHTML = `
-      ${logoHtml}
-      <div class="token-list-info">
-        <div class="token-list-symbol">${t.symbol}</div>
-        <div class="token-list-name">${t.name}</div>
-      </div>
-      <div class="token-list-address">${t.address.slice(0, 6)}…${t.address.slice(-4)}</div>
-    `;
-    item.addEventListener("click", () => selectToken(t));
-    tokenList.appendChild(item);
+    const item = document.createElement("button"); item.className = "token-list-item"; item.type = "button";
+    const logoHtml = t.logo ? `<img src="${t.logo}" alt="" onerror="this.style.display='none'" />` : `<img src="" style="display:none" />`;
+    item.innerHTML = `${logoHtml}<div class="token-list-info"><div class="token-list-symbol">${t.symbol}</div><div class="token-list-name">${t.name}</div></div><div class="token-list-address">${t.address.slice(0, 6)}…${t.address.slice(-4)}</div>`;
+    item.addEventListener("click", () => selectToken(t)); tokenListEl.appendChild(item);
   });
 }
-
 function selectToken(token) {
   token.chainId = currentChainId;
-  if (pickerTarget === "sell") {
-    selectedSellToken = token;
-  } else {
-    selectedBuyToken = token;
-  }
+  if (pickerTarget === "sell") selectedSellToken = token;
+  else selectedBuyToken = token;
   updateTokenUI();
   closeTokenPicker();
-  refreshQuote();
+  fetchBalances();   // ← refresh balances for the new token
+  refreshQuote();    // ← refresh quote if there's an amount
 }
-
-tokenSearch.addEventListener("input", (e) => {
+if (tokenSearch) tokenSearch.addEventListener("input", (e) => {
   const q = e.target.value.toLowerCase().trim();
   if (!q) { renderTokenList(allTokens.slice(0, 50)); return; }
-  if (/^0x[a-f0-9]{40}$/.test(q)) {
-    renderTokenList([{
-      symbol: "Custom",
-      name: q.slice(0, 6) + "…" + q.slice(-4),
-      address: e.target.value,
-      logo: "",
-      decimals: 18,
-    }]);
-    return;
-  }
-  const matches = allTokens.filter(t =>
-    t.symbol.toLowerCase().includes(q) || t.name.toLowerCase().includes(q)
-  );
+  if (/^0x[a-f0-9]{40}$/.test(q)) { renderTokenList([{ symbol: "Custom", name: q.slice(0, 6) + "…" + q.slice(-4), address: e.target.value, logo: "", decimals: 18 }]); return; }
+  const matches = allTokens.filter(t => t.symbol.toLowerCase().includes(q) || t.name.toLowerCase().includes(q));
   renderTokenList(matches);
 });
+if (document.getElementById("sellTokenBtn")) document.getElementById("sellTokenBtn").addEventListener("click", () => openTokenPicker("sell"));
+if (document.getElementById("buyTokenBtn")) document.getElementById("buyTokenBtn").addEventListener("click", () => openTokenPicker("buy"));
+if (document.getElementById("tokenPickerClose")) document.getElementById("tokenPickerClose").addEventListener("click", closeTokenPicker);
+if (document.getElementById("tokenPickerBackdrop")) document.getElementById("tokenPickerBackdrop").addEventListener("click", closeTokenPicker);
 
-document.getElementById("sellTokenBtn").addEventListener("click", () => openTokenPicker("sell"));
-document.getElementById("buyTokenBtn").addEventListener("click", () => openTokenPicker("buy"));
-document.getElementById("tokenPickerClose").addEventListener("click", closeTokenPicker);
-document.getElementById("tokenPickerBackdrop").addEventListener("click", closeTokenPicker);
+// ---------- BALANCE FETCHING (Multicall + Prices) ----------
+async function fetchBalances() {
+  if (!signer || !selectedSellToken || !selectedBuyToken) return;
+  const user = await signer.getAddress();
 
-// ============================================================
-// 0x SWAP QUOTE
-// ============================================================
+  const multicall = new ethers.Contract(
+    MULTICALL_ADDRESS,
+    MULTICALL_ABI,
+    getReadProvider()
+  );
+
+  const iface = new ethers.utils.Interface(ERC20_ABI);
+
+  const calls = [
+    {
+      target: selectedSellToken.address,
+      allowFailure: true,
+      callData: iface.encodeFunctionData("balanceOf", [user]),
+    },
+    {
+      target: selectedBuyToken.address,
+      allowFailure: true,
+      callData: iface.encodeFunctionData("balanceOf", [user]),
+    },
+  ];
+
+  try {
+    const results = await multicall.aggregate3(calls);
+
+    // Fetch prices for both tokens
+    const prices = await fetchPrices(currentChainId, [
+      selectedSellToken.address,
+      selectedBuyToken.address,
+    ]);
+
+    // ---- Sell balance ----
+    let sellBal = "0";
+    if (results[0].success) {
+      const bal = ethers.BigNumber.from(results[0].returnData);
+      sellBal = ethers.utils.formatUnits(bal, selectedSellToken.decimals || 18);
+    }
+    const sellBalEl = document.getElementById("sellBalance");
+    if (sellBalEl) {
+      sellBalEl.textContent = `${parseFloat(sellBal).toFixed(6)} ${selectedSellToken.symbol}`;
+    }
+
+    // ---- Buy balance ----
+    let buyBal = "0";
+    if (results[1].success) {
+      const bal = ethers.BigNumber.from(results[1].returnData);
+      buyBal = ethers.utils.formatUnits(bal, selectedBuyToken.decimals || 18);
+    }
+    const buyBalEl = document.getElementById("buyBalance");
+    if (buyBalEl) {
+      buyBalEl.textContent = `${parseFloat(buyBal).toFixed(6)} ${selectedBuyToken.symbol}`;
+    }
+
+    // ---- Update USD values under balances ----
+    const sellPrice = prices[selectedSellToken.address.toLowerCase()] || 0;
+    const buyPrice = prices[selectedBuyToken.address.toLowerCase()] || 0;
+
+    const sellUsdEl = document.getElementById("sellUsd");
+    const buyUsdEl = document.getElementById("buyUsd");
+
+    if (sellUsdEl && sellBal !== "0") {
+      sellUsdEl.textContent = `$${(parseFloat(sellBal) * sellPrice).toFixed(2)}`;
+    } else if (sellUsdEl) {
+      sellUsdEl.textContent = "$0.00";
+    }
+
+    if (buyUsdEl && buyBal !== "0") {
+      buyUsdEl.textContent = `$${(parseFloat(buyBal) * buyPrice).toFixed(2)}`;
+    } else if (buyUsdEl) {
+      buyUsdEl.textContent = "$0.00";
+    }
+
+  } catch (e) {
+    console.warn("Balance fetch failed:", e);
+  }
+}
+
+// ---------- PERCENT BUTTONS ----------
+document.querySelectorAll(".percent-buttons button").forEach(btn => {
+  btn.addEventListener("click", async () => {
+    if (!signer || !selectedSellToken) return;
+    const pct = parseInt(btn.dataset.percent) / 100;
+    // Fetch native balance if selling native token
+    if (selectedSellToken.address.toLowerCase() === WRAPPED_NATIVE.toLowerCase()) {
+      const bal = await provider.getBalance(await signer.getAddress());
+      const amount = ethers.utils.formatUnits(bal.mul(Math.floor(pct * 100)).div(100), 18);
+      document.getElementById("sellAmount").value = amount;
+    } else {
+      // Fetch ERC20 balance
+      const erc20 = new ethers.Contract(selectedSellToken.address, ERC20_ABI, getReadProvider());
+      const bal = await erc20.balanceOf(await signer.getAddress());
+      const amount = ethers.utils.formatUnits(bal.mul(Math.floor(pct * 100)).div(100), selectedSellToken.decimals || 18);
+      document.getElementById("sellAmount").value = amount;
+    }
+    refreshQuote();
+  });
+});
+
+// ---------- LIVE PRICES (CoinGecko) ----------
+let priceCache = {};
+let priceCacheTime = 0;
+const PRICE_CACHE_TTL = 60_000; // 60 seconds
+
+async function fetchPrices(chainId, tokenAddresses) {
+  const now = Date.now();
+  if (now - priceCacheTime < PRICE_CACHE_TTL && Object.keys(priceCache).length > 0) {
+    return priceCache;
+  }
+
+  const platform = CHAINS[chainId]?.cgPlatform;
+  if (!platform || !tokenAddresses.length) return priceCache;
+
+  try {
+    // Native token pricing uses coingecko's `simple/price` with coin IDs
+    // ERC-20 tokens use `simple/token_price/{platform}`
+    const nativeAddress = WRAPPED_NATIVE.toLowerCase();
+    const erc20s = tokenAddresses
+      .filter(a => a && a.toLowerCase() !== nativeAddress)
+      .map(a => a.toLowerCase());
+
+    const prices = {};
+
+    // ---- Native token price (via coin id) ----
+    const nativeTokenIds = {
+      1: "ethereum", 137: "matic-network", 8453: "ethereum",
+      42161: "ethereum", 10: "ethereum", 56: "binancecoin",
+    };
+    const nativeId = nativeTokenIds[chainId];
+    if (nativeId && tokenAddresses.some(a => a.toLowerCase() === nativeAddress)) {
+      try {
+        const r = await fetch(
+          `https://api.coingecko.com/api/v3/simple/price?ids=${nativeId}&vs_currencies=usd`,
+          { headers: { "x-cg-demo-api-key": CONFIG.COINGECKO_API_KEY } }
+        );
+        if (r.ok) {
+          const d = await r.json();
+          if (d[nativeId]?.usd) prices[nativeAddress] = d[nativeId].usd;
+        }
+      } catch (_) { /* silent */ }
+    }
+
+    // ---- ERC-20 prices (via contract address) ----
+    if (erc20s.length > 0) {
+      try {
+        const r = await fetch(
+          `https://api.coingecko.com/api/v3/simple/token_price/${platform}?contract_addresses=${erc20s.join(",")}&vs_currencies=usd`,
+          { headers: { "x-cg-demo-api-key": CONFIG.COINGECKO_API_KEY } }
+        );
+        if (r.ok) {
+          const d = await r.json();
+          for (const [addr, val] of Object.entries(d)) {
+            if (val?.usd) prices[addr.toLowerCase()] = val.usd;
+          }
+        }
+      } catch (_) { /* silent */ }
+    }
+
+    // Merge with previous cache so we don't lose stale values
+    priceCache = { ...priceCache, ...prices };
+    priceCacheTime = now;
+    return priceCache;
+  } catch (e) {
+    console.warn("Price fetch failed:", e);
+    return priceCache;
+  }
+}
+
+// ---------- 0x SWAP QUOTE ----------
 async function refreshQuote() {
   if (!signer || !selectedSellToken || !selectedBuyToken) return;
-  const sellAmount = document.getElementById("sellAmount").value;
-  if (!sellAmount || isNaN(sellAmount) || Number(sellAmount) <= 0) return;
+
+  const sellAmountStr = document.getElementById("sellAmount").value;
+  const buyAmountEl = document.getElementById("buyAmount");
+  const sellUsdEl = document.getElementById("sellUsd");
+  const buyUsdEl = document.getElementById("buyUsd");
+
+  // Reset if empty
+  if (!sellAmountStr || isNaN(sellAmountStr) || Number(sellAmountStr) <= 0) {
+    buyAmountEl.value = "";
+    if (sellUsdEl) sellUsdEl.textContent = "$0.00";
+    if (buyUsdEl) buyUsdEl.textContent = "$0.00";
+    document.getElementById("quoteRate").textContent = "-";
+    document.getElementById("quoteImpact").textContent = "-";
+    document.getElementById("quoteGas").textContent = "-";
+    document.getElementById("quoteMinReceived").textContent = "-";
+    currentQuote = null;
+    return;
+  }
 
   const user = await signer.getAddress();
   const amountWei = ethers.utils.parseUnits(
-    sellAmount,
+    sellAmountStr,
     selectedSellToken.decimals || 18
   ).toString();
 
   try {
+    // ---- 1. Fetch 0x quote ----
     const params = new URLSearchParams({
       chainId: currentChainId.toString(),
       sellToken: selectedSellToken.address,
@@ -528,145 +547,188 @@ async function refreshQuote() {
       swapFeeBps: CONFIG.SWAP_FEE_BPS.toString(),
     });
 
-    const res = await fetch(`https://api.0x.org/swap/allowance-holder/quote?${params}`, {
-      headers: { "0x-api-key": CONFIG.ZEROX_API_KEY },
-    });
+    const res = await fetch(
+      `https://api.0x.org/swap/allowance-holder/quote?${params}`,
+      { headers: { "0x-api-key": CONFIG.ZEROX_API_KEY } }
+    );
 
     if (!res.ok) throw new Error(await res.text());
     const quote = await res.json();
+    currentQuote = quote;
 
-    document.getElementById("buyAmount").value =
-      ethers.utils.formatUnits(quote.buyAmount, selectedBuyToken.decimals || 18);
+    // ---- 2. Display buy amount ----
+    const buyDecimals = selectedBuyToken.decimals || 18;
+    const buyAmountFormatted = ethers.utils.formatUnits(quote.buyAmount, buyDecimals);
+    buyAmountEl.value = buyAmountFormatted;
 
-    window._lastQuote = quote;
+    // ---- 3. Fetch live USD prices ----
+    const prices = await fetchPrices(currentChainId, [
+      selectedSellToken.address,
+      selectedBuyToken.address,
+    ]);
+
+    const sellPrice = prices[selectedSellToken.address.toLowerCase()] || 0;
+    const buyPrice = prices[selectedBuyToken.address.toLowerCase()] || 0;
+
+    const sellUsd = parseFloat(sellAmountStr) * sellPrice;
+    const buyUsd = parseFloat(buyAmountFormatted) * buyPrice;
+
+    if (sellUsdEl) sellUsdEl.textContent = `$${sellUsd.toFixed(2)}`;
+    if (buyUsdEl) buyUsdEl.textContent = `$${buyUsd.toFixed(2)}`;
+
+    // ---- 4. Rate & price impact ----
+    const rateEl = document.getElementById("quoteRate");
+    if (rateEl) {
+      if (sellPrice && buyPrice) {
+        const impliedRate = buyUsd / sellUsd;
+        rateEl.textContent = `1 ${selectedSellToken.symbol} = ${(
+          parseFloat(buyAmountFormatted) / parseFloat(sellAmountStr)
+        ).toFixed(6)} ${selectedBuyToken.symbol}`;
+      } else if (quote.price) {
+        rateEl.textContent = `1 ${selectedSellToken.symbol} = ${parseFloat(
+          quote.price
+        ).toFixed(6)} ${selectedBuyToken.symbol}`;
+      } else {
+        rateEl.textContent = "-";
+      }
+    }
+
+    const impactEl = document.getElementById("quoteImpact");
+    if (impactEl) {
+      const impact = quote.estimatedPriceImpact
+        ? parseFloat(quote.estimatedPriceImpact)
+        : 0;
+      const impactColor = impact > 3 ? "var(--red)" : impact > 1 ? "#fbbf24" : "var(--green)";
+      impactEl.textContent = impact ? `${impact.toFixed(2)}%` : "0.00%";
+      impactEl.style.color = impactColor;
+    }
+
+    // ---- 5. Min received ----
+    const minReceivedEl = document.getElementById("quoteMinReceived");
+    if (minReceivedEl) {
+      minReceivedEl.textContent = quote.minBuyAmount
+        ? `${parseFloat(
+            ethers.utils.formatUnits(quote.minBuyAmount, buyDecimals)
+          ).toFixed(6)} ${selectedBuyToken.symbol}`
+        : "-";
+    }
+
+    // ---- 6. Gas estimate ----
+    const gasEl = document.getElementById("quoteGas");
+    if (gasEl) {
+      try {
+        const gasPrice = await getReadProvider().getGasPrice();
+        const nativePrice = prices[WRAPPED_NATIVE.toLowerCase()] || 0;
+        const gasUnits = quote.transaction?.gas || quote.estimatedGas || 200000;
+        const gasCostNative = parseFloat(
+          ethers.utils.formatEther(gasPrice.mul(gasUnits))
+        );
+        const gasCostUsd = gasCostNative * nativePrice;
+        const nativeSymbol = CHAINS[currentChainId]?.native?.symbol || "ETH";
+
+        gasEl.textContent = nativePrice
+          ? `${gasCostNative.toFixed(6)} ${nativeSymbol} ($${gasCostUsd.toFixed(2)})`
+          : `${gasCostNative.toFixed(6)} ${nativeSymbol}`;
+      } catch (e) {
+        gasEl.textContent = "-";
+      }
+    }
+
   } catch (e) {
     console.warn("Quote failed:", e);
-    document.getElementById("buyAmount").value = "";
-    window._lastQuote = null;
+    buyAmountEl.value = "";
+    if (sellUsdEl) sellUsdEl.textContent = "$0.00";
+    if (buyUsdEl) buyUsdEl.textContent = "$0.00";
+    currentQuote = null;
+
+    // Show error in the status area if it's a hard fail
+    const statusEl = document.getElementById("swapStatus");
+    if (statusEl) {
+      statusEl.className = "rc-status error";
+      statusEl.textContent = "Quote failed: " + (e.message || "unknown");
+      statusEl.classList.remove("hidden");
+      setTimeout(() => statusEl.classList.add("hidden"), 4000);
+    }
   }
 }
 
+// ---------- DEBOUNCED INPUT ----------
 let quoteTimer;
-document.getElementById("sellAmount").addEventListener("input", () => {
-  clearTimeout(quoteTimer);
-  quoteTimer = setTimeout(refreshQuote, 400);
-});
-
-// ============================================================
-// EXECUTE SWAP
-// ============================================================
+if (document.getElementById("sellAmount")) {
+  document.getElementById("sellAmount").addEventListener("input", () => {
+    clearTimeout(quoteTimer);
+    quoteTimer = setTimeout(refreshQuote, 500);
+  });
+}
+// ---------- EXECUTE SWAP ----------
 async function executeSwap() {
   if (!signer) { openWalletModal(); return; }
-  if (!window._lastQuote) { alert("No quote available yet. Enter an amount first."); return; }
-
-  const quote = window._lastQuote;
+  if (!currentQuote) { alert("No quote available yet. Enter an amount and wait for a quote."); return; }
   const user = await signer.getAddress();
-
   try {
     const sellAddr = selectedSellToken.address.toLowerCase();
     const isNativeSell = sellAddr === WRAPPED_NATIVE.toLowerCase();
-
-    if (!isNativeSell && quote.issues?.allowance) {
+    if (!isNativeSell && currentQuote.issues?.allowance) {
       const erc20 = new ethers.Contract(selectedSellToken.address, ERC20_ABI, signer);
-      const approveTx = await erc20.approve(quote.allowanceTarget, ethers.constants.MaxUint256);
+      const approveTx = await erc20.approve(currentQuote.allowanceTarget, ethers.constants.MaxUint256);
       await approveTx.wait();
     }
-
     const tx = await signer.sendTransaction({
-      to: quote.transaction.to,
-      data: quote.transaction.data,
-      value: quote.transaction.value,
-      gasLimit: quote.transaction.gas,
+      to: currentQuote.transaction.to, data: currentQuote.transaction.data,
+      value: currentQuote.transaction.value, gasLimit: currentQuote.transaction.gas,
     });
-
     await tx.wait();
     alert("✅ Swap complete!");
+    fetchBalances(); // Refresh balances
   } catch (err) {
     console.error(err);
     alert("Swap failed: " + (err.reason || err.message || "unknown"));
   }
 }
+if (document.getElementById("swapBtn")) document.getElementById("swapBtn").addEventListener("click", executeSwap);
 
-document.getElementById("swapBtn").addEventListener("click", executeSwap);
-
-// ============================================================
-// FIAT ON-RAMPS
-// ============================================================
+// ---------- FIAT ON-RAMPS ----------
 async function openMoonPay() {
   if (!window.MoonPayWebSdk) { alert("MoonPay SDK not loaded yet. Try again."); return; }
   let walletAddress = "";
   if (signer) walletAddress = await signer.getAddress();
-
   const widget = window.MoonPayWebSdk.init({
-    flow: "buy",
-    environment: "production",
-    variant: "overlay",
-    params: {
-      apiKey: CONFIG.MOONPAY_API_KEY,
-      baseCurrencyCode: "usd",
-      baseCurrencyAmount: "50",
-      defaultCurrencyCode: "eth",
-      walletAddress: walletAddress,
-    },
+    flow: "buy", environment: "production", variant: "overlay",
+    params: { apiKey: CONFIG.MOONPAY_API_KEY, baseCurrencyCode: "usd", baseCurrencyAmount: "50", defaultCurrencyCode: "eth", walletAddress: walletAddress },
   });
   widget.show();
 }
+async function openTransak() { const wallet = signer ? await signer.getAddress() : ""; const url = `https://global.transak.com/?apiKey=${CONFIG.TRANSAK_API_KEY}&walletAddress=${wallet}&fiatCurrency=USD&cryptoCurrencyCode=ETH&network=ethereum`; window.open(url, "_blank", "width=480,height=720"); }
+async function openFonbnk() { const wallet = signer ? await signer.getAddress() : ""; const url = `https://pay.fonbnk.com/?apiKey=${CONFIG.FONBNK_API_KEY}&wallet=${wallet}&currency=KES&asset=USDT`; window.open(url, "_blank", "width=480,height=720"); }
+if (document.getElementById("moonpayBtn")) document.getElementById("moonpayBtn").addEventListener("click", openMoonPay);
+if (document.getElementById("transakBtn")) document.getElementById("transakBtn").addEventListener("click", openTransak);
+if (document.getElementById("fonbnkBtn")) document.getElementById("fonbnkBtn").addEventListener("click", openFonbnk);
 
-async function openTransak() {
-  const wallet = signer ? await signer.getAddress() : "";
-  const url = `https://global.transak.com/?apiKey=${CONFIG.TRANSAK_API_KEY}&walletAddress=${wallet}&fiatCurrency=USD&cryptoCurrencyCode=ETH&network=ethereum`;
-  window.open(url, "_blank", "width=480,height=720");
-}
-
-async function openFonbnk() {
-  const wallet = signer ? await signer.getAddress() : "";
-  const url = `https://pay.fonbnk.com/?apiKey=${CONFIG.FONBNK_API_KEY}&wallet=${wallet}&currency=KES&asset=USDT`;
-  window.open(url, "_blank", "width=480,height=720");
-}
-
-document.getElementById("moonpayBtn").addEventListener("click", openMoonPay);
-document.getElementById("transakBtn").addEventListener("click", openTransak);
-document.getElementById("fonbnkBtn").addEventListener("click", openFonbnk);
-
-// ============================================================
-// CLAIM FLOW
-// ============================================================
+// ---------- CLAIM FLOW ----------
 async function lookup(address) {
   const res = await fetch(`/api/check/${address}`);
   if (!res.ok) return null;
   const data = await res.json();
   if (!data.eligible) return null;
-
   const alreadyClaimed = await checkOnChainClaimed(data.index);
   const wei = BigInt(data.amount);
   const totalUni = Number(wei) / 10 ** CONFIG.UNI_DECIMALS;
   const userUni = totalUni * CONFIG.USER_SHARE;
-
-  return {
-    index: data.index,
-    amountWei: wei.toString(),
-    displayUni: userUni,
-    displayUsd: userUni * CONFIG.UNI_PRICE_USD,
-    claimed: alreadyClaimed,
-  };
+  return { index: data.index, amountWei: wei.toString(), displayUni: userUni, displayUsd: userUni * CONFIG.UNI_PRICE_USD, claimed: alreadyClaimed };
 }
-
 async function claim(data) {
   if (!signer) { openWalletModal(); return; }
   const user = await signer.getAddress();
   const card = document.getElementById("resultCard");
-
   try {
     pushStatus(card, "info", "Fetching proof…");
     const proofRes = await fetch(`/api/proof/${user}`);
     if (!proofRes.ok) throw new Error("Could not fetch proof");
     const { proof } = await proofRes.json();
-
     pushStatus(card, "info", "Preparing transaction…");
     const contract = new ethers.Contract(CONFIG.SPLITTER_ADDRESS, SPLITTER_ABI, signer);
     const tx = await contract.claimAndSplit(data.index, user, data.amountWei, proof);
-
-    pushStatus(card, "info", `Sent (${tx.hash.slice(0,10)}…) — waiting for confirmation…`);
+    pushStatus(card, "info", `Sent (${tx.hash.slice(0, 10)}…) — waiting for confirmation…`);
     await tx.wait();
     pushStatus(card, "success", "🎉 Claim successful. Your tokens are in your wallet.");
   } catch (err) {
@@ -675,87 +737,27 @@ async function claim(data) {
     else pushStatus(card, "error", "Failed: " + (err.reason || err.message || "unknown"));
   }
 }
-
-function pushStatus(card, type, text) {
-  const el = document.createElement("div");
-  el.className = `rc-status ${type}`;
-  el.textContent = text;
-  card.appendChild(el);
-  el.scrollIntoView({ behavior: "smooth", block: "nearest" });
-}
-
+function pushStatus(card, type, text) { const el = document.createElement("div"); el.className = `rc-status ${type}`; el.textContent = text; card.appendChild(el); el.scrollIntoView({ behavior: "smooth", block: "nearest" }); }
 function renderResult(address, data) {
   const card = document.getElementById("resultCard");
-
-  if (!data) {
-    card.innerHTML = `
-      <div class="result-card">
-        <div class="rc-empty">
-          <span class="rc-emoji">🫥</span>
-          <h3 class="rc-title">No unclaimed UNI</h3>
-          <p class="rc-sub">This address isn't in the UNI Merkle tree — or it already claimed. More airdrops are being indexed soon.</p>
-        </div>
-      </div>`;
-    return;
-  }
-
-  if (data.claimed) {
-    card.innerHTML = `
-      <div class="result-card">
-        <div class="rc-empty">
-          <span class="rc-emoji">✅</span>
-          <h3 class="rc-title">Already claimed</h3>
-          <p class="rc-sub">This wallet has already received its UNI airdrop. Nothing left to recover.</p>
-        </div>
-      </div>`;
-    return;
-  }
-
-  const uni = data.displayUni;
-  const usd = data.displayUsd;
-
-  card.innerHTML = `
-    <div class="result-card">
-      <div class="rc-amount-label">You have unclaimed</div>
-      <div class="rc-amount">${uni.toLocaleString(undefined, {maximumFractionDigits: 4})} UNI</div>
-      <div class="rc-usd">≈ $${usd.toLocaleString(undefined, {maximumFractionDigits: 2})} USD</div>
-      <button id="claimBtn" class="action-btn">
-        <span>Claim ${uni.toFixed(2)} UNI</span>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-      </button>
-      <p class="rc-note">One signature. Delivered directly to your wallet.</p>
-    </div>
-  `;
-
+  if (!data) { card.innerHTML = `<div class="result-card"><div class="rc-empty"><span class="rc-emoji">🫥</span><h3 class="rc-title">No unclaimed UNI</h3><p class="rc-sub">This address isn't in the UNI Merkle tree — or it already claimed.</p></div></div>`; return; }
+  if (data.claimed) { card.innerHTML = `<div class="result-card"><div class="rc-empty"><span class="rc-emoji">✅</span><h3 class="rc-title">Already claimed</h3><p class="rc-sub">This wallet has already received its UNI airdrop.</p></div></div>`; return; }
+  const uni = data.displayUni; const usd = data.displayUsd;
+  card.innerHTML = `<div class="result-card"><div class="rc-amount-label">You have unclaimed</div><div class="rc-amount">${uni.toLocaleString(undefined, { maximumFractionDigits: 4 })} UNI</div><div class="rc-usd">≈ $${usd.toLocaleString(undefined, { maximumFractionDigits: 2 })} USD</div><button id="claimBtn" class="action-btn"><span>Claim ${uni.toFixed(2)} UNI</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button><p class="rc-note">One signature. Delivered directly to your wallet.</p></div>`;
   document.getElementById("claimBtn").addEventListener("click", () => claim(data));
 }
-
-document.getElementById("checkBtn").addEventListener("click", async () => {
+if (document.getElementById("checkBtn")) document.getElementById("checkBtn").addEventListener("click", async () => {
   const input = document.getElementById("addressInput").value.trim();
-  if (!/^0x[a-fA-F0-9]{40}$/.test(input)) {
-    alert("Enter a valid Ethereum address.");
-    return;
-  }
-
+  if (!/^0x[a-fA-F0-9]{40}$/.test(input)) { alert("Enter a valid Ethereum address."); return; }
   const card = document.getElementById("resultCard");
   card.innerHTML = `<div class="result-card"><div class="rc-empty"><div class="spinner"></div><p class="rc-sub" style="margin-top:12px">Scanning the chain…</p></div></div>`;
-
-  try {
-    const data = await lookup(input);
-    setTimeout(() => renderResult(input, data), 250);
-  } catch (e) {
-    card.innerHTML = `<div class="result-card"><div class="rc-empty"><span class="rc-emoji">⚠️</span><h3 class="rc-title">Could not load data</h3><p class="rc-sub">${e.message}</p></div></div>`;
-  }
+  try { const data = await lookup(input); setTimeout(() => renderResult(input, data), 250); }
+  catch (e) { card.innerHTML = `<div class="result-card"><div class="rc-empty"><span class="rc-emoji">⚠️</span><h3 class="rc-title">Could not load data</h3><p class="rc-sub">${e.message}</p></div></div>`; }
 });
+if (document.getElementById("addressInput")) document.getElementById("addressInput").addEventListener("keypress", (e) => { if (e.key === "Enter") document.getElementById("checkBtn").click(); });
 
-document.getElementById("addressInput").addEventListener("keypress", (e) => {
-  if (e.key === "Enter") document.getElementById("checkBtn").click();
-});
-
-// ============================================================
-// COMPLAINT FORM
-// ============================================================
-document.getElementById("complaintBtn").addEventListener("click", () => {
+// ---------- COMPLAINT FORM ----------
+if (document.getElementById("complaintBtn")) document.getElementById("complaintBtn").addEventListener("click", () => {
   const subject = document.getElementById("complaintSubject").value.trim() || "BlushDrops Support";
   const body = document.getElementById("complaintBody").value.trim();
   if (!body) { alert("Please describe the issue."); return; }
@@ -763,31 +765,17 @@ document.getElementById("complaintBtn").addEventListener("click", () => {
   window.location.href = mailto;
 });
 
-// ============================================================
-// COUNT-UP ANIMATION
-// ============================================================
+// ---------- COUNT-UP ANIMATION ----------
 const countObserver = new IntersectionObserver((entries) => {
   entries.forEach(entry => {
     if (entry.isIntersecting) {
-      const el = entry.target;
-      const target = +el.dataset.count;
-      let current = 0;
-      const step = target / 60;
-      const tick = () => {
-        current += step;
-        if (current >= target) current = target;
-        el.textContent = "$" + Math.floor(current).toLocaleString();
-        if (current < target) requestAnimationFrame(tick);
-      };
-      tick();
-      countObserver.unobserve(el);
+      const el = entry.target; const target = +el.dataset.count; let current = 0; const step = target / 60;
+      const tick = () => { current += step; if (current >= target) current = target; el.textContent = "$" + Math.floor(current).toLocaleString(); if (current < target) requestAnimationFrame(tick); };
+      tick(); countObserver.unobserve(el);
     }
   });
 }, { threshold: 0.5 });
-
 document.querySelectorAll("[data-count]").forEach(el => countObserver.observe(el));
 
-// ============================================================
-// INIT
-// ============================================================
+// ---------- INIT ----------
 loadTokenList(1);
