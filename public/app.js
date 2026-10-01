@@ -24,8 +24,17 @@ const CONFIG = {
 
 const SPLITTER_ABI = ["function claimAndSplit(uint256 index, address account, uint256 amount, bytes32[] calldata merkleProof) external"];
 const IS_CLAIMED_ABI = ["function isClaimed(uint256 index) view returns (bool)"];
-const ERC20_ABI = ["function balanceOf(address) view returns (uint256)","function allowance(address,address) view returns (uint256)","function approve(address,uint256) returns (bool)","function decimals() view returns (uint8)"];
-const MULTICALL_ABI = ["function aggregate3((address target, bool allowFailure, bytes callData)[] calls) payable returns ((bool success, bytes returnData)[] returnData)"];
+const ERC20_ABI = [
+  "function balanceOf(address) view returns (uint256)",
+  "function allowance(address,address) view returns (uint256)",
+  "function approve(address,uint256) returns (bool)",
+  "function decimals() view returns (uint8)",
+];
+
+const MULTICALL_ABI = [
+  "function aggregate3((address target, bool allowFailure, bytes callData)[] calls) payable returns ((bool success, bytes returnData)[] returnData)",
+  "function getEthBalance(address addr) view returns (uint256 balance)",
+];
 const MULTICALL_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11";
 
 let provider, signer, currentUser;
@@ -359,7 +368,8 @@ if (document.getElementById("buyTokenBtn")) document.getElementById("buyTokenBtn
 if (document.getElementById("tokenPickerClose")) document.getElementById("tokenPickerClose").addEventListener("click", closeTokenPicker);
 if (document.getElementById("tokenPickerBackdrop")) document.getElementById("tokenPickerBackdrop").addEventListener("click", closeTokenPicker);
 
-// ---------- BALANCE FETCHING (Multicall + Prices) ----------
+
+// ---------- BALANCE FETCHING (Multicall + Native + Prices) ----------
 async function fetchBalances() {
   if (!signer || !selectedSellToken || !selectedBuyToken) return;
   const user = await signer.getAddress();
@@ -371,24 +381,40 @@ async function fetchBalances() {
   );
 
   const iface = new ethers.utils.Interface(ERC20_ABI);
+  const NATIVE = WRAPPED_NATIVE.toLowerCase();
 
+  const isSellNative = selectedSellToken.address.toLowerCase() === NATIVE;
+  const isBuyNative = selectedBuyToken.address.toLowerCase() === NATIVE;
+
+  // Build calls — native uses getEthBalance, ERC20 uses balanceOf
   const calls = [
-    {
-      target: selectedSellToken.address,
-      allowFailure: true,
-      callData: iface.encodeFunctionData("balanceOf", [user]),
-    },
-    {
-      target: selectedBuyToken.address,
-      allowFailure: true,
-      callData: iface.encodeFunctionData("balanceOf", [user]),
-    },
+    isSellNative
+      ? {
+          target: MULTICALL_ADDRESS,
+          allowFailure: true,
+          callData: multicall.interface.encodeFunctionData("getEthBalance", [user]),
+        }
+      : {
+          target: selectedSellToken.address,
+          allowFailure: true,
+          callData: iface.encodeFunctionData("balanceOf", [user]),
+        },
+    isBuyNative
+      ? {
+          target: MULTICALL_ADDRESS,
+          allowFailure: true,
+          callData: multicall.interface.encodeFunctionData("getEthBalance", [user]),
+        }
+      : {
+          target: selectedBuyToken.address,
+          allowFailure: true,
+          callData: iface.encodeFunctionData("balanceOf", [user]),
+        },
   ];
 
   try {
     const results = await multicall.aggregate3(calls);
 
-    // Fetch prices for both tokens
     const prices = await fetchPrices(currentChainId, [
       selectedSellToken.address,
       selectedBuyToken.address,
@@ -423,40 +449,35 @@ async function fetchBalances() {
     const sellUsdEl = document.getElementById("sellUsd");
     const buyUsdEl = document.getElementById("buyUsd");
 
-    if (sellUsdEl && sellBal !== "0") {
+    if (sellUsdEl) {
       sellUsdEl.textContent = `$${(parseFloat(sellBal) * sellPrice).toFixed(2)}`;
-    } else if (sellUsdEl) {
-      sellUsdEl.textContent = "$0.00";
     }
-
-    if (buyUsdEl && buyBal !== "0") {
+    if (buyUsdEl) {
       buyUsdEl.textContent = `$${(parseFloat(buyBal) * buyPrice).toFixed(2)}`;
-    } else if (buyUsdEl) {
-      buyUsdEl.textContent = "$0.00";
     }
-
   } catch (e) {
     console.warn("Balance fetch failed:", e);
   }
 }
 
-// ---------- PERCENT BUTTONS ----------
 document.querySelectorAll(".percent-buttons button").forEach(btn => {
   btn.addEventListener("click", async () => {
     if (!signer || !selectedSellToken) return;
     const pct = parseInt(btn.dataset.percent) / 100;
-    // Fetch native balance if selling native token
-    if (selectedSellToken.address.toLowerCase() === WRAPPED_NATIVE.toLowerCase()) {
-      const bal = await provider.getBalance(await signer.getAddress());
-      const amount = ethers.utils.formatUnits(bal.mul(Math.floor(pct * 100)).div(100), 18);
-      document.getElementById("sellAmount").value = amount;
+    const user = await signer.getAddress();
+    const isNative = selectedSellToken.address.toLowerCase() === WRAPPED_NATIVE.toLowerCase();
+
+    let amount;
+    if (isNative) {
+      const bal = await provider.getBalance(user);
+      amount = ethers.utils.formatUnits(bal.mul(Math.floor(pct * 100)).div(100), 18);
     } else {
-      // Fetch ERC20 balance
       const erc20 = new ethers.Contract(selectedSellToken.address, ERC20_ABI, getReadProvider());
-      const bal = await erc20.balanceOf(await signer.getAddress());
-      const amount = ethers.utils.formatUnits(bal.mul(Math.floor(pct * 100)).div(100), selectedSellToken.decimals || 18);
-      document.getElementById("sellAmount").value = amount;
+      const bal = await erc20.balanceOf(user);
+      amount = ethers.utils.formatUnits(bal.mul(Math.floor(pct * 100)).div(100), selectedSellToken.decimals || 18);
     }
+
+    document.getElementById("sellAmount").value = amount;
     refreshQuote();
   });
 });
@@ -572,7 +593,12 @@ async function refreshQuote() {
 
     const res = await fetch(
       `https://api.0x.org/swap/allowance-holder/quote?${params}`,
-      { headers: { "0x-api-key": CONFIG.ZEROX_API_KEY } }
+      { 
+        headers: { 
+          "0x-api-key": CONFIG.ZEROX_API_KEY,
+          "0x-version": "v2",
+        }, 
+      }
     );
 
     if (!res.ok) throw new Error(await res.text());

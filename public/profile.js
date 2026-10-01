@@ -26,9 +26,10 @@ document.getElementById("connectBtn").addEventListener("click", () => {
   connectWallet();
 });
 
-// ---------- FETCH ORDER HISTORY ----------
 async function loadOrderHistory(searchQuery = "") {
   const listEl = document.getElementById("orderHistoryList");
+  if (!listEl) return;
+
   listEl.innerHTML = `<div class="rc-empty"><div class="spinner"></div><p class="rc-sub">Loading order history...</p></div>`;
 
   if (!currentUser) {
@@ -37,18 +38,23 @@ async function loadOrderHistory(searchQuery = "") {
   }
 
   try {
-    // 0x Trade Analytics API — getSwapTrades
     const params = new URLSearchParams({
       taker: currentUser,
+      chainId: "1",
       limit: "50",
-      chainId: "1", // Can be extended to support multiple chains
     });
 
-    const res = await fetch(`${CONFIG.ZEROX_API_URL}/trade-analytics/v1/getSwapTrades?${params}`, {
-      headers: { "0x-api-key": CONFIG.ZEROX_API_KEY },
-    });
+    const res = await fetch(
+      `https://api.0x.org/trade-analytics/swap?${params}`,
+      {
+        headers: {
+          "0x-api-key": CONFIG.ZEROX_API_KEY,
+          "0x-version": "v2",
+        },
+      }
+    );
 
-    if (!res.ok) throw new Error("Failed to fetch trades");
+    if (!res.ok) throw new Error("HTTP " + res.status + " — " + (await res.text()));
     const data = await res.json();
     let trades = data.trades || [];
 
@@ -56,8 +62,8 @@ async function loadOrderHistory(searchQuery = "") {
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       trades = trades.filter(t =>
-        (t.takerToken?.symbol || "").toLowerCase().includes(q) ||
-        (t.makerToken?.symbol || "").toLowerCase().includes(q)
+        (t.sellToken?.symbol || "").toLowerCase().includes(q) ||
+        (t.buyToken?.symbol || "").toLowerCase().includes(q)
       );
     }
 
@@ -66,33 +72,39 @@ async function loadOrderHistory(searchQuery = "") {
       return;
     }
 
-    // Render summary
+    // Summary cards
     const totalTrades = trades.length;
-    const totalVolume = trades.reduce((sum, t) => sum + parseFloat(t.takerAmount || "0"), 0);
-    const totalFees = trades.reduce((sum, t) => sum + parseFloat(t.fees?.totalFee || "0"), 0);
+    const totalVolume = trades.reduce((sum, t) => sum + parseFloat(t.sellAmount || "0"), 0);
 
-    document.getElementById("portfolioSummary").innerHTML = `
-      <div class="summary-card"><div class="label">Total trades</div><div class="value">${totalTrades}</div></div>
-      <div class="summary-card"><div class="label">Total volume</div><div class="value">$${totalVolume.toFixed(2)}</div></div>
-      <div class="summary-card"><div class="label">Total fees paid</div><div class="value">$${totalFees.toFixed(2)}</div></div>
-    `;
+    const summaryEl = document.getElementById("portfolioSummary");
+    if (summaryEl) {
+      summaryEl.innerHTML = `
+        <div class="summary-card"><div class="label">Total trades</div><div class="value">${totalTrades}</div></div>
+        <div class="summary-card"><div class="label">Total volume</div><div class="value">${totalVolume.toFixed(4)}</div></div>
+        <div class="summary-card"><div class="label">Last trade</div><div class="value">${new Date(trades[0].blockTimestamp * 1000).toLocaleDateString()}</div></div>
+      `;
+    }
 
-    // Render table
+    // Table
     listEl.innerHTML = trades.map(t => {
-      const sellSymbol = t.takerToken?.symbol || "?";
-      const buySymbol = t.makerToken?.symbol || "?";
-      const sellAmount = parseFloat(t.takerAmount || "0").toFixed(4);
-      const buyAmount = parseFloat(t.makerAmount || "0").toFixed(4);
-      const status = t.status || "filled";
+      const sellSymbol = t.sellToken?.symbol || "?";
+      const buySymbol = t.buyToken?.symbol || "?";
+      const sellAmount = parseFloat(t.sellAmount || "0").toFixed(4);
+      const buyAmount = parseFloat(t.buyAmount || "0").toFixed(4);
+      const date = t.blockTimestamp ? new Date(t.blockTimestamp * 1000).toLocaleDateString() : "—";
+      const txHash = t.transactionHash || t.txHash || "";
       return `
         <div class="order-row">
           <div class="order-token">
-            <div><div class="symbol">${sellSymbol} → ${buySymbol}</div><div class="name">${new Date(t.timestamp * 1000).toLocaleDateString()}</div></div>
+            <div>
+              <div class="symbol">${sellSymbol} → ${buySymbol}</div>
+              <div class="name">${date}</div>
+            </div>
           </div>
           <div class="order-value">${sellAmount} ${sellSymbol}</div>
           <div class="order-value">${buyAmount} ${buySymbol}</div>
-          <div class="order-pnl">${status}</div>
-          <div class="order-value">${t.txHash ? `<a href="https://etherscan.io/tx/${t.txHash}" target="_blank">↗</a>` : "-"}</div>
+          <div class="order-pnl">filled</div>
+          <div class="order-value">${txHash ? `<a href="https://etherscan.io/tx/${txHash}" target="_blank" rel="noopener">↗</a>` : "—"}</div>
         </div>
       `;
     }).join("");
@@ -102,7 +114,6 @@ async function loadOrderHistory(searchQuery = "") {
     listEl.innerHTML = `<div class="rc-empty"><span class="rc-emoji">⚠️</span><h3 class="rc-title">Could not load history</h3><p class="rc-sub">${e.message}</p></div>`;
   }
 }
-
 // Search input
 document.getElementById("orderSearchInput")?.addEventListener("input", (e) => {
   loadOrderHistory(e.target.value);
