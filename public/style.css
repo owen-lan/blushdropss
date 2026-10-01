@@ -1103,3 +1103,45 @@ details p { margin-top: 12px; color: var(--muted); font-size: 14px; line-height:
    ============================================================ */
 .spinner { width: 20px; height: 20px; border: 2px solid rgba(255,255,255,0.1); border-top-color: var(--pink); border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; vertical-align: middle; margin-right: 8px; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Community page extras */
+.community-intro {
+  max-width: 620px;
+  margin: 0 auto 48px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 15.5px;
+  line-height: 1.7;
+}
+
+.community-card {
+  position: relative;
+}
+
+.community-arrow {
+  color: var(--dim);
+  flex-shrink: 0;
+  transition: transform 0.25s, color 0.25s;
+}
+.community-card:hover .community-arrow {
+  color: var(--pink);
+  transform: translate(2px, -2px);
+}
+
+.community-icon svg {
+  display: block;
+  color: var(--pink);
+}
+
+.community-footer-note {
+  text-align: center;
+  margin-top: 64px;
+  padding-top: 32px;
+  border-top: 1px solid var(--line);
+}
+.community-footer-note p {
+  color: var(--dim);
+  font-size: 13.5px;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.04em;
+}

@@ -252,37 +252,60 @@ const BASE_TOKENS = {
 async function loadTokenList(chainId) {
   const base = BASE_TOKENS[chainId] || [];
   allTokens = [...base];
-  if (!selectedSellToken || selectedSellToken.chainId !== chainId) selectedSellToken = { ...base[0], chainId };
-  if (!selectedBuyToken || selectedBuyToken.chainId !== chainId) selectedBuyToken = { ...(base[1] || base[0]), chainId };
+
+  if (!selectedSellToken || selectedSellToken.chainId !== chainId) {
+    selectedSellToken = { ...base[0], chainId };
+  }
+  if (!selectedBuyToken || selectedBuyToken.chainId !== chainId) {
+    selectedBuyToken = { ...(base[1] || base[0]), chainId };
+  }
   updateTokenUI();
 
-  const platform = CHAINS[chainId]?.cgPlatform;
-  if (!platform) return;
+  // CoinGecko token list CDN — different domain, no API key required
+  const CG_TOKEN_LIST = {
+    1:     "https://tokens.coingecko.com/ethereum/all.json",
+    137:   "https://tokens.coingecko.com/polygon-pos/all.json",
+    8453:  "https://tokens.coingecko.com/base/all.json",
+    42161: "https://tokens.coingecko.com/arbitrum-one/all.json",
+    10:    "https://tokens.coingecko.com/optimistic-ethereum/all.json",
+    56:    "https://tokens.coingecko.com/binance-smart-chain/all.json",
+  };
+
+  const url = CG_TOKEN_LIST[chainId];
+  if (!url) return;
 
   try {
-    const res = await fetch(
-      `https://api.coingecko.com/api/v3/token_lists/${platform}/all.json`,
-      {
-        headers: {
-          "x-cg-pro-api-key": COINGECKO_API_KEY
-        }
-      }
-    );
-
-    if (!res.ok) throw new Error("CoinGecko HTTP " + res.status);
+    console.log(`Fetching token list for chain ${chainId}...`);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
+
+    // Standard token list format: { tokens: [{ address, symbol, name, decimals, logoURI }, ...] }
     const tokens = data.tokens || [];
+    console.log(`CoinGecko returned ${tokens.length} tokens`);
+
     const seen = new Set(base.map(t => t.address.toLowerCase()));
+    let added = 0;
+
     for (const t of tokens) {
-      if (!t.address) continue;
+      if (!t.address || !t.symbol) continue;
       const addr = t.address.toLowerCase();
       if (seen.has(addr)) continue;
       seen.add(addr);
-      allTokens.push({ symbol: t.symbol || "?", name: t.name || "Unknown", address: t.address, logo: t.logoURI || "", decimals: t.decimals != null ? t.decimals : 18, chainId });
+      allTokens.push({
+        symbol: t.symbol,
+        name: t.name || t.symbol,
+        address: t.address,
+        logo: t.logoURI || "",
+        decimals: t.decimals != null ? t.decimals : 18,
+        chainId,
+      });
+      added++;
     }
-    console.log(`Loaded ${allTokens.length} tokens for chain ${chainId}`);
+
+    console.log(`✅ Token list ready: ${allTokens.length} total (${added} added from CoinGecko)`);
   } catch (e) {
-    console.warn("CoinGecko token list failed:", e);
+    console.warn("❌ CoinGecko token list failed, using base tokens only:", e);
     allTokens = base.map(t => ({ ...t, chainId }));
   }
 }

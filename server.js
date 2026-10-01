@@ -70,8 +70,21 @@ app.get('/api/proof/:address', async (req, res) => {
 });
 
 // ---------- STATIC SITE ----------
+// ---------- STATIC SITE ----------
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Explicit page routes (must come before the catch-all)
+app.get('/profile', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'profile.html'));
+});
+app.get('/community', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'community.html'));
+});
+app.get('/support', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'support.html'));
+});
+
+// Catch-all for SPA-style routes → index
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
