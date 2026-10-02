@@ -68,8 +68,41 @@ app.get('/api/proof/:address', async (req, res) => {
     res.status(500).json({ error: 'shard fetch failed' });
   }
 });
+// ---------- 0x API PROXY ----------
+// The 0x API blocks the `0x-version` header from browsers (CORS).
+// We proxy through our server to add it server-side.
+app.get('/api/0x/quote', async (req, res) => {
+  try {
+    const apiKey = req.headers['x-api-key'];
+    if (!apiKey) return res.status(400).json({ error: 'missing 0x api key' });
+    const qs = new URLSearchParams(req.query).toString();
+    const r = await fetch(`https://api.0x.org/swap/allowance-holder/quote?${qs}`, {
+      headers: { '0x-api-key': apiKey, '0x-version': 'v2' },
+    });
+    const text = await r.text();
+    res.status(r.status).set('Content-Type', 'application/json').send(text);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
-// ---------- STATIC SITE ----------
+app.get('/api/0x/trades', async (req, res) => {
+  try {
+    const apiKey = req.headers['x-api-key'];
+    if (!apiKey) return res.status(400).json({ error: 'missing 0x api key' });
+    const qs = new URLSearchParams(req.query).toString();
+    const r = await fetch(`https://api.0x.org/trade-analytics/swap?${qs}`, {
+      headers: { '0x-api-key': apiKey, '0x-version': 'v2' },
+    });
+    const text = await r.text();
+    res.status(r.status).set('Content-Type', 'application/json').send(text);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+
 // ---------- STATIC SITE ----------
 app.use(express.static(path.join(__dirname, 'public')));
 

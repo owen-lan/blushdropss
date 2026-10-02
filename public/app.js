@@ -55,7 +55,16 @@ const CHAINS = {
 };
 
 const WRAPPED_NATIVE = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+// ============================================================
+// DOM REFERENCES (declared first to avoid TDZ errors)
+// ============================================================
+const walletModalEl = document.getElementById("walletModal");
+const walletListEl = document.getElementById("walletList");
+const walletEmptyEl = document.getElementById("walletEmpty");
 
+// ============================================================
+// CUSTOM CURSOR
+// ============================================================
 // ---------- CURSOR ----------
 const cursor = document.getElementById("cursor");
 const cursorDot = document.getElementById("cursorDot");
@@ -73,6 +82,7 @@ document.querySelectorAll(".tab").forEach(tab => {
     document.querySelector(`.tab-panel[data-panel="${tab.dataset.tab}"]`).classList.add("active");
   });
 });
+// ============================================================
 
 // ---------- READ PROVIDER ----------
 function getReadProvider() {
@@ -154,51 +164,35 @@ function renderWalletItem(name, icon, providerObj) {
   return btn;
 }
 function refreshWalletList() {
-  if (!walletList) return;
-  walletList.innerHTML = "";
-  if (detectedWallets.size === 0) { walletList.classList.add("hidden"); walletEmpty.classList.remove("hidden"); return; }
-  walletList.classList.remove("hidden"); walletEmpty.classList.add("hidden");
-  for (const { info, provider } of detectedWallets.values()) walletList.appendChild(renderWalletItem(info.name, info.icon, provider));
-}
-
-// ---------- CONNECT WALLET ----------
-async function connectWithProvider(providerObj) {
-  try {
-    if (!providerObj) { alert("Wallet provider not available."); return; }
-    provider = new ethers.providers.Web3Provider(providerObj);
-    await provider.send("eth_requestAccounts", []);
-    signer = provider.getSigner();
-    currentUser = await signer.getAddress();
-    const btn = document.getElementById("connectBtn");
-    if (btn) { btn.classList.add("connected"); document.getElementById("connectText").textContent = currentUser.slice(0, 6) + "…" + currentUser.slice(-4); }
-    const input = document.getElementById("addressInput");
-    if (input && !input.value.trim()) input.value = currentUser;
-    closeWalletModal();
-    window.dispatchEvent(new CustomEvent("walletConnected", {
-      detail: { address: currentUser }
-    }));
-    providerObj.on?.("accountsChanged", (accounts) => {
-      if (!accounts || accounts.length === 0) { currentUser = null; if (btn) { btn.classList.remove("connected"); document.getElementById("connectText").textContent = "Connect"; } }
-      else { currentUser = accounts[0]; if (btn) document.getElementById("connectText").textContent = currentUser.slice(0, 6) + "…" + currentUser.slice(-4); fetchBalances(); }
-    });
-    providerObj.on?.("chainChanged", (chainIdHex) => { currentChainId = parseInt(chainIdHex, 16); window.location.reload(); });
-
-    const net = await provider.getNetwork();
-    currentChainId = net.chainId;
-    document.querySelectorAll(".chain-btn").forEach(b => { b.classList.toggle("active", parseInt(b.dataset.chain) === currentChainId); });
-    loadTokenList(currentChainId);
-    fetchBalances();
-  } catch (err) {
-    console.error(err);
-    if (err.code === 4001) return;
-    alert("Failed to connect: " + (err.message || "unknown error"));
+  if (!walletListEl) return;
+  walletListEl.innerHTML = "";
+  if (detectedWallets.size === 0) {
+    walletListEl.classList.add("hidden");
+    if (walletEmptyEl) walletEmptyEl.classList.remove("hidden");
+    return;
+  }
+  walletListEl.classList.remove("hidden");
+  if (walletEmptyEl) walletEmptyEl.classList.add("hidden");
+  for (const { info, provider } of detectedWallets.values()) {
+    walletListEl.appendChild(renderWalletItem(info.name, info.icon, provider));
   }
 }
 
-if (document.getElementById("connectBtn")) document.getElementById("connectBtn").addEventListener("click", () => {
-  if (currentUser) { navigator.clipboard?.writeText(currentUser); const t = document.getElementById("connectText"); const orig = t.textContent; t.textContent = "Copied!"; setTimeout(() => (t.textContent = orig), 1200); return; }
-  openWalletModal();
-});
+// ---------- WALLET MODAL ----------
+function openWalletModal() {
+  if (!walletModalEl) return;
+  walletModalEl.classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+  refreshWalletList();
+}
+function closeWalletModal() {
+  if (!walletModalEl) return;
+  walletModalEl.classList.add("hidden");
+  document.body.style.overflow = "";
+}
+if (document.getElementById("walletClose")) document.getElementById("walletClose").addEventListener("click", closeWalletModal);
+if (document.getElementById("walletBackdrop")) document.getElementById("walletBackdrop").addEventListener("click", closeWalletModal);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeWalletModal(); });
 
 // ---------- CHAIN SELECTOR ----------
 document.querySelectorAll(".chain-btn").forEach(btn => {
@@ -353,11 +347,18 @@ function selectToken(token) {
   token.chainId = currentChainId;
   if (pickerTarget === "sell") selectedSellToken = token;
   else selectedBuyToken = token;
+
   updateTokenUI();
   closeTokenPicker();
-  fetchBalances();   // ← refresh balances for the new token
-  refreshQuote();    // ← refresh quote if there's an amount
+
+  // INSTANT: refresh balances the moment a token is picked
+  fetchBalances();
+
+  // Refresh the quote only if there's already an amount typed
+  const amt = document.getElementById("sellAmount")?.value;
+  if (amt && parseFloat(amt) > 0) refreshQuote();
 }
+
 if (tokenSearch) tokenSearch.addEventListener("input", (e) => {
   const q = e.target.value.toLowerCase().trim();
   if (!q) { renderTokenList(allTokens.slice(0, 50)); return; }
@@ -404,8 +405,7 @@ async function fetchBalances() {
         : { target: selectedBuyToken.address, allowFailure: true, callData: iface.encodeFunctionData("balanceOf", [user]) },
     ];
 
-    const results = await multicall.aggregate3(calls);
-
+    const results = await multicall.callStatic.aggregate3(calls);
     // ---- Parse balances ----
     let sellBal = "0";
     if (results[0].success) {
@@ -505,7 +505,7 @@ async function fetchPrices(chainId, tokenAddresses) {
 
   const prices = {};
 
-  // Native token price
+  // --- Native token price ---
   const nativeTokenIds = {
     1: "ethereum", 137: "matic-network", 8453: "ethereum",
     42161: "ethereum", 10: "ethereum", 56: "binancecoin",
@@ -521,10 +521,10 @@ async function fetchPrices(chainId, tokenAddresses) {
         const d = await r.json();
         if (d[nativeId]?.usd) prices[nativeAddress] = d[nativeId].usd;
       }
-    } catch (_) {}
+    } catch (_) { /* silent */ }
   }
 
-  // ERC-20 prices
+  // --- ERC-20 prices ---
   if (erc20s.length > 0) {
     try {
       const r = await fetch(
@@ -537,7 +537,7 @@ async function fetchPrices(chainId, tokenAddresses) {
           if (val?.usd) prices[addr.toLowerCase()] = val.usd;
         }
       }
-    } catch (_) {}
+    } catch (_) { /* silent */ }
   }
 
   priceCache = { ...priceCache, ...prices };
