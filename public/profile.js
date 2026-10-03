@@ -1,9 +1,8 @@
 // ============================================================
 // BLUSHDROPS — PROFILE PAGE
 // ============================================================
-
 const PROFILE_CONFIG = {
-  ZEROX_API_KEY: "8fc750e2-ebc9-4211-b32e-a035fcab239c", // ← paste your 0x key here
+  ZEROX_API_KEY: "8fc750e2-ebc9-4211-b32e-a035fcab239c", // ← paste your 0x key
 };
 
 let profileUser = null;
@@ -12,6 +11,12 @@ window.addEventListener("walletConnected", (e) => {
   profileUser = e.detail.address;
   loadOrderHistory();
 });
+
+// Also handle case where wallet was already connected before profile.js loaded
+if (typeof currentUser !== "undefined" && currentUser) {
+  profileUser = currentUser;
+  loadOrderHistory();
+}
 
 async function loadOrderHistory(searchQuery = "") {
   const listEl = document.getElementById("orderHistoryList");
@@ -102,12 +107,4 @@ async function loadOrderHistory(searchQuery = "") {
 const searchInput = document.getElementById("orderSearchInput");
 if (searchInput) {
   searchInput.addEventListener("input", (e) => loadOrderHistory(e.target.value));
-}
-
-// Initial state
-if (typeof currentUser !== "undefined" && currentUser) {
-  profileUser = currentUser;
-  loadOrderHistory();
-} else {
-  loadOrderHistory();
 }

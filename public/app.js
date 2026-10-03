@@ -108,9 +108,10 @@ async function checkOnChainClaimed(index) {
 }
 
 // ============================================================
-// WALLET — MODAL, DETECTION, CONNECT (DOM-safe)
+// WALLET — persistent across all pages
 // ============================================================
 const detectedWallets = new Map();
+const WALLET_STORAGE_KEY = "blushdrops_wallet_rdns";
 
 function colorForName(name) {
   const colors = [["#ff8ac1","#a855f7"],["#7dd3fc","#3b82f6"],["#6ee7b7","#059669"],["#fbbf24","#f59e0b"],["#f472b6","#db2777"]];
@@ -119,7 +120,7 @@ function colorForName(name) {
   return colors[Math.abs(hash) % colors.length];
 }
 
-function renderWalletItem(name, icon, providerObj) {
+function renderWalletItem(name, icon, providerObj, rdns) {
   const btn = document.createElement("button");
   btn.className = "wallet-item";
   btn.type = "button";
@@ -138,7 +139,7 @@ function renderWalletItem(name, icon, providerObj) {
     <span class="wallet-item-arrow">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
     </span>`;
-  btn.addEventListener("click", () => connectWithProvider(providerObj));
+  btn.addEventListener("click", () => connectWithProvider(providerObj, rdns));
   return btn;
 }
 
@@ -154,27 +155,14 @@ function refreshWalletList() {
   }
   listEl.classList.remove("hidden");
   if (emptyEl) emptyEl.classList.add("hidden");
-  for (const { info, provider } of detectedWallets.values()) {
-    listEl.appendChild(renderWalletItem(info.name, info.icon, provider));
+  for (const [rdns, entry] of detectedWallets.entries()) {
+    listEl.appendChild(renderWalletItem(entry.info.name, entry.info.icon, entry.provider, rdns));
   }
 }
 
 function openWalletModal() {
   const modalEl = document.getElementById("walletModal");
-  console.log("[wallet] openWalletModal called, modalEl =", modalEl);
-
-  // Fallback: if no modal exists on this page, connect directly
-  if (!modalEl) {
-    const provider = (detectedWallets.values().next().value || {}).provider;
-    if (provider) {
-      connectWithProvider(provider);
-    } else if (window.ethereum) {
-      connectWithProvider(window.ethereum);
-    } else {
-      alert("Install MetaMask or another browser wallet to connect.");
-    }
-    return;
-  }
+  if (!modalEl) return;
   modalEl.classList.remove("hidden");
   document.body.style.overflow = "hidden";
   refreshWalletList();
@@ -187,35 +175,33 @@ function closeWalletModal() {
   document.body.style.overflow = "";
 }
 
-async function connectWithProvider(providerObj) {
-  console.log("[wallet] connectWithProvider called");
-  try {
-    if (!providerObj) { alert("Wallet provider not available."); return; }
+// ---- Connect + persist choice ----
+async function connectWithProvider(providerObj, rdns) {
+  if (!providerObj) { alert("Wallet provider not available."); return; }
+  if (typeof ethers === "undefined") { alert("Ethers library failed to load. Refresh the page."); return; }
 
+  try {
     provider = new ethers.providers.Web3Provider(providerObj);
     await provider.send("eth_requestAccounts", []);
     signer = provider.getSigner();
     currentUser = await signer.getAddress();
-    console.log("[wallet] connected as", currentUser);
 
-    const btn = document.getElementById("connectBtn");
-    const txt = document.getElementById("connectText");
-    if (btn) btn.classList.add("connected");
-    if (txt) txt.textContent = currentUser.slice(0, 6) + "…" + currentUser.slice(-4);
+    // Save chosen wallet so we auto-reconnect on other pages
+    if (rdns) {
+      try { localStorage.setItem(WALLET_STORAGE_KEY, rdns); } catch (_) {}
+    }
 
-    const input = document.getElementById("addressInput");
-    if (input && !input.value.trim()) input.value = currentUser;
-
+    updateWalletUI();
     closeWalletModal();
 
     providerObj.on?.("accountsChanged", (accounts) => {
       if (!accounts || accounts.length === 0) {
         currentUser = null;
-        if (btn) btn.classList.remove("connected");
-        if (txt) txt.textContent = "Connect";
+        try { localStorage.removeItem(WALLET_STORAGE_KEY); } catch (_) {}
+        updateWalletUI();
       } else {
         currentUser = accounts[0];
-        if (txt) txt.textContent = currentUser.slice(0, 6) + "…" + currentUser.slice(-4);
+        updateWalletUI();
         if (typeof fetchBalances === "function") fetchBalances();
       }
     });
@@ -235,6 +221,59 @@ async function connectWithProvider(providerObj) {
     console.error("[wallet] connect failed:", err);
     if (err.code === 4001) return;
     alert("Failed to connect: " + (err.message || "unknown error"));
+  }
+}
+
+function updateWalletUI() {
+  const btn = document.getElementById("connectBtn");
+  const txt = document.getElementById("connectText");
+  const input = document.getElementById("addressInput");
+
+  if (currentUser) {
+    if (btn) btn.classList.add("connected");
+    if (txt) txt.textContent = currentUser.slice(0, 6) + "…" + currentUser.slice(-4);
+    if (input && !input.value.trim()) input.value = currentUser;
+  } else {
+    if (btn) btn.classList.remove("connected");
+    if (txt) txt.textContent = "Connect";
+  }
+}
+
+// ---- Silent auto-reconnect on every page load ----
+async function autoReconnect() {
+  if (typeof ethers === "undefined") return;
+  if (!window.ethereum) return;
+
+  try {
+    // eth_accounts never prompts — returns already-authorized accounts
+    const accounts = await window.ethereum.request({ method: "eth_accounts" });
+    if (!accounts || accounts.length === 0) return;
+
+    // If we have multiple providers, find the one the user picked before
+    let chosenProvider = window.ethereum;
+    const savedRdns = localStorage.getItem(WALLET_STORAGE_KEY);
+    if (savedRdns && detectedWallets.has(savedRdns)) {
+      chosenProvider = detectedWallets.get(savedRdns).provider;
+    }
+
+    provider = new ethers.providers.Web3Provider(chosenProvider);
+    signer = provider.getSigner();
+    currentUser = accounts[0];
+
+    updateWalletUI();
+
+    const net = await provider.getNetwork();
+    currentChainId = net.chainId;
+    document.querySelectorAll(".chain-btn").forEach(b => {
+      b.classList.toggle("active", parseInt(b.dataset.chain) === currentChainId);
+    });
+
+    if (typeof loadTokenList === "function") loadTokenList(currentChainId);
+    if (typeof fetchBalances === "function") fetchBalances();
+
+    window.dispatchEvent(new CustomEvent("walletConnected", { detail: { address: currentUser } }));
+  } catch (e) {
+    console.warn("[wallet] auto-reconnect failed:", e);
   }
 }
 
@@ -268,12 +307,8 @@ function legacyDetect() {
 }
 setTimeout(legacyDetect, 300);
 
-// ============================================================
-// DOM-READY SETUP — bind all click handlers safely
-// ============================================================
+// ---- Attach handlers after DOM is ready ----
 function setupWalletHandlers() {
-  console.log("[wallet] setupWalletHandlers running");
-
   const closeBtn = document.getElementById("walletClose");
   const backdrop = document.getElementById("walletBackdrop");
   const connectBtn = document.getElementById("connectBtn");
@@ -284,7 +319,6 @@ function setupWalletHandlers() {
 
   if (connectBtn) {
     connectBtn.addEventListener("click", () => {
-      console.log("[wallet] connect button clicked, currentUser =", currentUser);
       if (currentUser) {
         navigator.clipboard?.writeText(currentUser);
         const t = document.getElementById("connectText");
@@ -296,10 +330,10 @@ function setupWalletHandlers() {
       }
       openWalletModal();
     });
-    console.log("[wallet] connect button handler attached ✅");
-  } else {
-    console.warn("[wallet] connectBtn not found in DOM ⚠️");
   }
+
+  // Fire auto-reconnect AFTER everything is wired
+  autoReconnect();
 }
 
 if (document.readyState === "loading") {
