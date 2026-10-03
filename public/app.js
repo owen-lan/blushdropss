@@ -1097,7 +1097,7 @@ window.addEventListener("load", async () => {
   }
 });
 // ============================================================
-// SPA-STYLE NAVIGATION — no reload, wallet stays connected
+// SPA ROUTER — bulletproof, no wrapper required
 // ============================================================
 const INTERNAL_ROUTES = [
   "/", "/index.html",
@@ -1117,62 +1117,63 @@ function updateNavActive(url) {
   });
 }
 
+function extractPageContent(doc) {
+  // 1. Prefer #route-view wrapper if present
+  const wrapper = doc.getElementById("route-view");
+  if (wrapper) {
+    console.log("[spa] using #route-view wrapper");
+    return wrapper.innerHTML;
+  }
+
+  // 2. Fallback: clone body, strip nav + modal + scripts
+  console.log("[spa] no wrapper — extracting body manually");
+  const clone = doc.body.cloneNode(true);
+  clone.querySelector("header.nav")?.remove();
+  clone.querySelector("#walletModal")?.remove();
+  clone.querySelectorAll("script").forEach(s => s.remove());
+  return clone.innerHTML;
+}
+
 async function navigateTo(url, push = true) {
   const cleanUrl = url.replace(/^https?:\/\/[^/]+/, "");
+  console.log("[spa] navigating →", cleanUrl);
 
   try {
     const res = await fetch(cleanUrl, { headers: { "X-Requested-With": "spa" } });
+    console.log("[spa] fetch status:", res.status);
     if (!res.ok) throw new Error("HTTP " + res.status);
 
     const html = await res.text();
     const doc = new DOMParser().parseFromString(html, "text/html");
+    const newContent = extractPageContent(doc);
 
-    const newView = doc.getElementById("route-view");
     const currentView = document.getElementById("route-view");
-
-    if (!newView || !currentView) {
-      // Structure mismatch — fall back to full navigation
+    if (!currentView) {
+      console.warn("[spa] current page missing #route-view — full nav");
       window.location.href = cleanUrl;
       return;
     }
 
-    // Swap content
-    currentView.innerHTML = newView.innerHTML;
-
-    // Update <title>
+    currentView.innerHTML = newContent;
     if (doc.title) document.title = doc.title;
-
-    // Update URL (no reload)
     if (push) history.pushState({ url: cleanUrl }, "", cleanUrl);
-
-    // Update nav active state
     updateNavActive(cleanUrl);
-
-    // Scroll to top
     window.scrollTo({ top: 0, behavior: "instant" });
-
-    // Fire page-specific logic
     onPageChanged(cleanUrl);
-
-    console.log("[spa] navigated →", cleanUrl);
+    console.log("[spa] ✅ navigated →", cleanUrl);
   } catch (e) {
-    console.warn("[spa] fallback to reload:", e);
+    console.warn("[spa] ❌ fallback reload:", e);
     window.location.href = cleanUrl;
   }
 }
 
 function onPageChanged(url) {
-  // Profile page — load order history if wallet is connected
-  if (url.includes("profile")) {
-    if (typeof loadOrderHistory === "function" && currentUser) {
-      loadOrderHistory();
-    } else if (typeof loadOrderHistory === "function") {
-      // Show "connect wallet" state
-      loadOrderHistory();
-    }
+  // Profile: load order history if wallet is connected
+  if (url.includes("profile") && typeof loadOrderHistory === "function") {
+    loadOrderHistory();
   }
 
-  // Re-trigger any count-up animations on the new content
+  // Count-up animations
   document.querySelectorAll("[data-count]").forEach(el => {
     if (el.dataset.animated) return;
     el.dataset.animated = "1";
@@ -1188,12 +1189,7 @@ function onPageChanged(url) {
     tick();
   });
 
-  // Re-bind any buttons that were inside the swapped content
-  bindPageButtons();
-}
-
-function bindPageButtons() {
-  // Complaint form
+  // Rebind complaint form if present
   const complaintBtn = document.getElementById("complaintBtn");
   if (complaintBtn && !complaintBtn.dataset.bound) {
     complaintBtn.dataset.bound = "1";
@@ -1204,50 +1200,36 @@ function bindPageButtons() {
       window.location.href = `mailto:owenlandia450@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     });
   }
-
-  // Order search
-  const searchInput = document.getElementById("orderSearchInput");
-  if (searchInput && !searchInput.dataset.bound) {
-    searchInput.dataset.bound = "1";
-    searchInput.addEventListener("input", (e) => {
-      if (typeof loadOrderHistory === "function") loadOrderHistory(e.target.value);
-    });
-  }
-
-  // Profile page — trigger load if wallet is connected
-  if (document.getElementById("orderHistoryList") && currentUser) {
-    if (typeof loadOrderHistory === "function") loadOrderHistory();
-  }
 }
 
-// Intercept all internal link clicks
-document.addEventListener("click", (e) => {
-  const link = e.target.closest("a");
-  if (!link) return;
-  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+// Attach the click interceptor ONCE
+if (!window.__spaClickBound) {
+  window.__spaClickBound = true;
+  document.addEventListener("click", (e) => {
+    const link = e.target.closest("a");
+    if (!link) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
 
-  let href = link.getAttribute("href");
-  if (!href) return;
+    let href = link.getAttribute("href");
+    if (!href) return;
+    if (href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:")) return;
+    if (/^https?:\/\//.test(href) && !href.startsWith(window.location.origin)) {
+      link.setAttribute("target", "_blank");
+      link.setAttribute("rel", "noopener");
+      return;
+    }
+    const url = href.replace(/^https?:\/\/[^/]+/, "");
+    if (!isInternalRoute(url)) return;
 
-  // Ignore external, anchors, mailto, tel
-  if (href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:")) return;
-  if (/^https?:\/\//.test(href) && !href.startsWith(window.location.origin)) {
-    link.setAttribute("target", "_blank");
-    link.setAttribute("rel", "noopener");
-    return;
-  }
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    navigateTo(url);
+  }, true);
+  console.log("[spa] click interceptor bound");
+}
 
-  const url = href.replace(/^https?:\/\/[^/]+/, "");
-  if (!isInternalRoute(url)) return;
-
-  e.preventDefault();
-  navigateTo(url);
-});
-
-// Handle back/forward buttons
 window.addEventListener("popstate", () => {
   navigateTo(window.location.pathname + window.location.search, false);
 });
 
-// On page load, mark the current route active
 updateNavActive(window.location.pathname);
