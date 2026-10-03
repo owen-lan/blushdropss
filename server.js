@@ -2,19 +2,20 @@ const express = require('express');
 const path = require('path');
 
 const app = express();
-// Redirect www to non-www
-// Redirect www → non-www (so wallet stays authorized)
+const PORT = process.env.PORT || 3000;
+const DATA_BASE = process.env.DATA_BASE ||
+  'https://github.com/owen-lan/blushdropss/releases/download/v2';
+
+// ---------- Redirect www → non-www ----------
 app.use((req, res, next) => {
-  if (req.headers.host && req.headers.host.startsWith("www.")) {
+  if (req.headers.host && req.headers.host.startsWith('www.')) {
     const newHost = req.headers.host.slice(4);
     return res.redirect(301, `https://${newHost}${req.originalUrl}`);
   }
   next();
 });
 
-const DATA_BASE = process.env.DATA_BASE ||
-  'https://github.com/owen-lan/blushdropss/releases/download/v2';
-
+// ---------- In-memory merkle index + shard cache ----------
 let LIGHT_INDEX = null;
 const SHARD_CACHE = new Map();
 const MAX_CACHED_SHARDS = 30;
@@ -29,20 +30,17 @@ async function loadIndex() {
 
 async function getShard(prefix) {
   if (SHARD_CACHE.has(prefix)) return SHARD_CACHE.get(prefix);
-
   const res = await fetch(`${DATA_BASE}/${prefix}.json`);
   if (!res.ok) return null;
-
   const shard = await res.json();
   if (SHARD_CACHE.size >= MAX_CACHED_SHARDS) {
-    const first = SHARD_CACHE.keys().next().value;
-    SHARD_CACHE.delete(first);
+    SHARD_CACHE.delete(SHARD_CACHE.keys().next().value);
   }
   SHARD_CACHE.set(prefix, shard);
   return shard;
 }
 
-// ---------- API ----------
+// ---------- Airdrop API ----------
 app.get('/api/health', (req, res) => {
   res.json({
     ready: !!LIGHT_INDEX,
@@ -65,7 +63,6 @@ app.get('/api/proof/:address', async (req, res) => {
   const addr = req.params.address.toLowerCase();
   if (!/^0x[a-f0-9]{40}$/.test(addr)) return res.status(400).json({ error: 'invalid address' });
   if (!LIGHT_INDEX[addr]) return res.status(404).json({ error: 'not in tree' });
-
   const prefix = addr.slice(2, 4);
   try {
     const shard = await getShard(prefix);
@@ -76,9 +73,8 @@ app.get('/api/proof/:address', async (req, res) => {
     res.status(500).json({ error: 'shard fetch failed' });
   }
 });
-// ---------- 0x API PROXY ----------
-// The 0x API blocks the `0x-version` header from browsers (CORS).
-// We proxy through our server to add it server-side.
+
+// ---------- 0x API proxy (fixes CORS for the 0x-version header) ----------
 app.get('/api/0x/quote', async (req, res) => {
   try {
     const apiKey = req.headers['x-api-key'];
@@ -109,27 +105,18 @@ app.get('/api/0x/trades', async (req, res) => {
   }
 });
 
-
-
-// ---------- STATIC SITE ----------
+// ---------- Static site + page routes ----------
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Explicit page routes (must come before the catch-all)
-app.get('/profile', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'profile.html'));
-});
-app.get('/community', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'community.html'));
-});
-app.get('/support', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'support.html'));
-});
+app.get('/profile',   (req, res) => res.sendFile(path.join(__dirname, 'public', 'profile.html')));
+app.get('/community', (req, res) => res.sendFile(path.join(__dirname, 'public', 'community.html')));
+app.get('/support',   (req, res) => res.sendFile(path.join(__dirname, 'public', 'support.html')));
 
-// Catch-all for SPA-style routes → index
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// ---------- Start ----------
 app.listen(PORT, () => {
   console.log(`Server listening on ${PORT}`);
   loadIndex().catch(e => console.error('Index load failed:', e));
