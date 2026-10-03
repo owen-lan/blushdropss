@@ -1205,29 +1205,49 @@ function onPageChanged(url) {
 // Attach the click interceptor ONCE
 if (!window.__spaClickBound) {
   window.__spaClickBound = true;
+
   document.addEventListener("click", (e) => {
     const link = e.target.closest("a");
     if (!link) return;
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
 
-    let href = link.getAttribute("href");
-    if (!href) return;
-    if (href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:")) return;
-    if (/^https?:\/\//.test(href) && !href.startsWith(window.location.origin)) {
+    const rawHref = link.getAttribute("href");
+    if (!rawHref) return;
+    if (rawHref.startsWith("#") || rawHref.startsWith("mailto:") || rawHref.startsWith("tel:")) return;
+
+    // Resolve href to a full URL no matter what format it's in
+    let url;
+    try {
+      url = new URL(rawHref, window.location.origin);
+    } catch (_) {
+      return;
+    }
+
+    // Compare domain ignoring www
+    const siteDomain = window.location.hostname.replace(/^www\./, "");
+    const linkDomain = url.hostname.replace(/^www\./, "");
+    if (linkDomain !== siteDomain) {
+      // External link — open in new tab, do nothing else
       link.setAttribute("target", "_blank");
       link.setAttribute("rel", "noopener");
       return;
     }
-    const url = href.replace(/^https?:\/\/[^/]+/, "");
-    if (!isInternalRoute(url)) return;
+
+    // Extract the path
+    const path = url.pathname;
+
+    // Check if this is one of our internal pages
+    const isInternal = INTERNAL_ROUTES.some(r => path === r || path.endsWith(r));
+    if (!isInternal) return;
 
     e.preventDefault();
     e.stopImmediatePropagation();
-    navigateTo(url);
+    console.log("[spa] intercepting click →", path);
+    navigateTo(path);
   }, true);
-  console.log("[spa] click interceptor bound");
-}
 
+  console.log("[spa] click interceptor bound (v2 — URL-normalized)");
+}
 window.addEventListener("popstate", () => {
   navigateTo(window.location.pathname + window.location.search, false);
 });
