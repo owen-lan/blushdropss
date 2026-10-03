@@ -758,6 +758,7 @@ async function openFonbnk() {
 // Never breaks when SPA swaps innerHTML
 // ============================================================
 document.addEventListener("click", async (e) => {
+  try {
   const t = e.target;
 
   // --- SPA nav links ---
@@ -846,6 +847,9 @@ document.addEventListener("click", async (e) => {
     window.location.href = `mailto:owenlandia450@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     return;
   }
+  } catch (err) {
+    console.error("[click] handler error:", err);
+  }
 }, true);
 
 // --- Input delegation ---
@@ -923,7 +927,29 @@ async function navigateTo(url, push = true) {
 }
 
 function onPageChanged(url) {
-  // Count-up animations
+  console.log("[spa] page changed →", url);
+
+  // 1. Re-apply wallet UI (in case nav is inside swapped content)
+  updateWalletUI();
+
+  // 2. Re-apply token UI (buttons reset to defaults after swap)
+  updateTokenUI();
+
+  // 3. If wallet is connected, refresh balances + quote
+  if (signer) {
+    // Small delay to make sure DOM is fully in place
+    setTimeout(() => {
+      if (document.getElementById("sellBalance")) {
+        fetchBalances();
+      }
+      const amt = document.getElementById("sellAmount")?.value;
+      if (amt && parseFloat(amt) > 0 && document.getElementById("buyAmount")) {
+        refreshQuote();
+      }
+    }, 100);
+  }
+
+  // 4. Count-up animations on stats
   document.querySelectorAll("[data-count]").forEach(el => {
     if (el.dataset.animated) return;
     el.dataset.animated = "1";
@@ -939,16 +965,11 @@ function onPageChanged(url) {
     tick();
   });
 
-  // Restore balances + quote if wallet connected
-  if (signer) {
-    if (document.getElementById("sellBalance")) fetchBalances();
-    const amt = document.getElementById("sellAmount")?.value;
-    if (amt && parseFloat(amt) > 0 && document.getElementById("buyAmount")) refreshQuote();
-  }
-
-  // Profile: load order history
-  if (url.includes("profile") && typeof loadOrderHistory === "function") {
-    loadOrderHistory();
+  // 5. Profile page: load order history
+  if (url.includes("profile")) {
+    if (typeof loadOrderHistory === "function") {
+      setTimeout(() => loadOrderHistory(), 100);
+    }
   }
 }
 
