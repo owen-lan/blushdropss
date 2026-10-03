@@ -31,6 +31,10 @@ async function loadOrderHistory(searchQuery = "") {
 
   listEl.innerHTML = `<div class="rc-empty"><div class="spinner"></div><p class="rc-sub">Loading order history…</p></div>`;
 
+  // Timeout protection
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
   try {
     const params = new URLSearchParams({
       taker: profileUser,
@@ -40,11 +44,18 @@ async function loadOrderHistory(searchQuery = "") {
 
     const res = await fetch(`/api/0x/trades?${params}`, {
       headers: { "x-api-key": PROFILE_CONFIG.ZEROX_API_KEY },
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
+
+    if (res.status === 401 || res.status === 403) {
+      listEl.innerHTML = `<div class="rc-empty"><span class="rc-emoji">🔑</span><h3 class="rc-title">API key needed</h3><p class="rc-sub">Add your 0x API key to see trade history.</p></div>`;
+      return;
+    }
 
     if (!res.ok) {
       const errText = await res.text();
-      throw new Error(`HTTP ${res.status} — ${errText.slice(0, 120)}`);
+      throw new Error(`HTTP ${res.status}`);
     }
 
     const data = await res.json();
@@ -99,11 +110,11 @@ async function loadOrderHistory(searchQuery = "") {
     }).join("");
 
   } catch (e) {
-    console.error(e);
-    listEl.innerHTML = `<div class="rc-empty"><span class="rc-emoji">⚠️</span><h3 class="rc-title">Couldn't load history</h3><p class="rc-sub">${e.message}</p></div>`;
+    clearTimeout(timeoutId);
+    const isTimeout = e.name === "AbortError";
+    listEl.innerHTML = `<div class="rc-empty"><span class="rc-emoji">${isTimeout ? "⏱️" : "⚠️"}</span><h3 class="rc-title">${isTimeout ? "Request timed out" : "Couldn't load history"}</h3><p class="rc-sub">${isTimeout ? "The 0x API took too long to respond. Try again later." : e.message}</p></div>`;
   }
 }
-
 const searchInput = document.getElementById("orderSearchInput");
 if (searchInput) {
   searchInput.addEventListener("input", (e) => loadOrderHistory(e.target.value));

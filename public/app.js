@@ -73,15 +73,7 @@ document.addEventListener("mousemove", (e) => {
   if (cursorDot) { cursorDot.style.left = e.clientX + "px"; cursorDot.style.top = e.clientY + "px"; }
 });
 
-// ---------- TABS ----------
-document.querySelectorAll(".tab").forEach(tab => {
-  tab.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
-    document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
-    tab.classList.add("active");
-    document.querySelector(`.tab-panel[data-panel="${tab.dataset.tab}"]`).classList.add("active");
-  });
-});
+
 // ============================================================
 
 // ---------- READ PROVIDER ----------
@@ -401,21 +393,7 @@ if (document.readyState === "loading") {
   setupWalletHandlers();
   startReconnectLoop();
 }
-// ---------- CHAIN SELECTOR ----------
-document.querySelectorAll(".chain-btn").forEach(btn => {
-  btn.addEventListener("click", async () => {
-    document.querySelectorAll(".chain-btn").forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-    const newChain = parseInt(btn.dataset.chain);
-    if (signer) {
-      try {
-        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x" + newChain.toString(16) }] });
-        currentChainId = newChain;
-      } catch (e) { console.warn("Chain switch failed:", e); if (e.code === 4902) alert("Please add this network to your wallet first."); return; }
-    } else { currentChainId = newChain; }
-    loadTokenList(currentChainId); fetchBalances();
-  });
-});
+
 
 // ---------- TOKEN LIST ----------
 const BASE_TOKENS = {
@@ -573,8 +551,8 @@ if (tokenSearch) tokenSearch.addEventListener("input", (e) => {
   const matches = allTokens.filter(t => t.symbol.toLowerCase().includes(q) || t.name.toLowerCase().includes(q));
   renderTokenList(matches);
 });
-if (document.getElementById("sellTokenBtn")) document.getElementById("sellTokenBtn").addEventListener("click", () => openTokenPicker("sell"));
-if (document.getElementById("buyTokenBtn")) document.getElementById("buyTokenBtn").addEventListener("click", () => openTokenPicker("buy"));
+
+
 if (document.getElementById("tokenPickerClose")) document.getElementById("tokenPickerClose").addEventListener("click", closeTokenPicker);
 if (document.getElementById("tokenPickerBackdrop")) document.getElementById("tokenPickerBackdrop").addEventListener("click", closeTokenPicker);
 
@@ -664,27 +642,7 @@ async function fetchBalances() {
   }
 }
 
-document.querySelectorAll(".percent-buttons button").forEach(btn => {
-  btn.addEventListener("click", async () => {
-    if (!signer || !selectedSellToken) return;
-    const pct = parseInt(btn.dataset.percent) / 100;
-    const user = await signer.getAddress();
-    const isNative = selectedSellToken.address.toLowerCase() === WRAPPED_NATIVE.toLowerCase();
 
-    let amount;
-    if (isNative) {
-      const bal = await provider.getBalance(user);
-      amount = ethers.utils.formatUnits(bal.mul(Math.floor(pct * 100)).div(100), 18);
-    } else {
-      const erc20 = new ethers.Contract(selectedSellToken.address, ERC20_ABI, getReadProvider());
-      const bal = await erc20.balanceOf(user);
-      amount = ethers.utils.formatUnits(bal.mul(Math.floor(pct * 100)).div(100), selectedSellToken.decimals || 18);
-    }
-
-    document.getElementById("sellAmount").value = amount;
-    refreshQuote();
-  });
-});
 
 // ---------- LIVE PRICES (CoinGecko) ----------
 let priceCache = {};
@@ -902,14 +860,8 @@ async function refreshQuote() {
   }
 }
 
-// ---------- DEBOUNCED INPUT ----------
-let quoteTimer;
-if (document.getElementById("sellAmount")) {
-  document.getElementById("sellAmount").addEventListener("input", () => {
-    clearTimeout(quoteTimer);
-    quoteTimer = setTimeout(refreshQuote, 500);
-  });
-}
+
+
 // ---------- EXECUTE SWAP ----------
 async function executeSwap() {
   if (!signer) { openWalletModal(); return; }
@@ -935,7 +887,7 @@ async function executeSwap() {
     alert("Swap failed: " + (err.reason || err.message || "unknown"));
   }
 }
-if (document.getElementById("swapBtn")) document.getElementById("swapBtn").addEventListener("click", executeSwap);
+
 
 // ---------- FIAT ON-RAMPS ----------
 async function openMoonPay() {
@@ -950,9 +902,7 @@ async function openMoonPay() {
 }
 async function openTransak() { const wallet = signer ? await signer.getAddress() : ""; const url = `https://global.transak.com/?apiKey=${CONFIG.TRANSAK_API_KEY}&walletAddress=${wallet}&fiatCurrency=USD&cryptoCurrencyCode=ETH&network=ethereum`; window.open(url, "_blank", "width=480,height=720"); }
 async function openFonbnk() { const wallet = signer ? await signer.getAddress() : ""; const url = `https://pay.fonbnk.com/?apiKey=${CONFIG.FONBNK_API_KEY}&wallet=${wallet}&currency=KES&asset=USDT`; window.open(url, "_blank", "width=480,height=720"); }
-if (document.getElementById("moonpayBtn")) document.getElementById("moonpayBtn").addEventListener("click", openMoonPay);
-if (document.getElementById("transakBtn")) document.getElementById("transakBtn").addEventListener("click", openTransak);
-if (document.getElementById("fonbnkBtn")) document.getElementById("fonbnkBtn").addEventListener("click", openFonbnk);
+
 
 // ---------- CLAIM FLOW ----------
 async function lookup(address) {
@@ -996,24 +946,10 @@ function renderResult(address, data) {
   card.innerHTML = `<div class="result-card"><div class="rc-amount-label">You have unclaimed</div><div class="rc-amount">${uni.toLocaleString(undefined, { maximumFractionDigits: 4 })} UNI</div><div class="rc-usd">≈ $${usd.toLocaleString(undefined, { maximumFractionDigits: 2 })} USD</div><button id="claimBtn" class="action-btn"><span>Claim ${uni.toFixed(2)} UNI</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button><p class="rc-note">One signature. Delivered directly to your wallet.</p></div>`;
   document.getElementById("claimBtn").addEventListener("click", () => claim(data));
 }
-if (document.getElementById("checkBtn")) document.getElementById("checkBtn").addEventListener("click", async () => {
-  const input = document.getElementById("addressInput").value.trim();
-  if (!/^0x[a-fA-F0-9]{40}$/.test(input)) { alert("Enter a valid Ethereum address."); return; }
-  const card = document.getElementById("resultCard");
-  card.innerHTML = `<div class="result-card"><div class="rc-empty"><div class="spinner"></div><p class="rc-sub" style="margin-top:12px">Scanning the chain…</p></div></div>`;
-  try { const data = await lookup(input); setTimeout(() => renderResult(input, data), 250); }
-  catch (e) { card.innerHTML = `<div class="result-card"><div class="rc-empty"><span class="rc-emoji">⚠️</span><h3 class="rc-title">Could not load data</h3><p class="rc-sub">${e.message}</p></div></div>`; }
-});
-if (document.getElementById("addressInput")) document.getElementById("addressInput").addEventListener("keypress", (e) => { if (e.key === "Enter") document.getElementById("checkBtn").click(); });
 
-// ---------- COMPLAINT FORM ----------
-if (document.getElementById("complaintBtn")) document.getElementById("complaintBtn").addEventListener("click", () => {
-  const subject = document.getElementById("complaintSubject").value.trim() || "BlushDrops Support";
-  const body = document.getElementById("complaintBody").value.trim();
-  if (!body) { alert("Please describe the issue."); return; }
-  const mailto = `mailto:owenlandia450@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  window.location.href = mailto;
-});
+
+
+
 
 // ---------- COUNT-UP ANIMATION ----------
 const countObserver = new IntersectionObserver((entries) => {
@@ -1166,8 +1102,175 @@ async function navigateTo(url, push = true) {
     window.location.href = cleanUrl;
   }
 }
+// ============================================================
+// REBIND HANDLERS after SPA navigation
+// (elements inside #route-view get recreated, listeners are lost)
+// ============================================================
+function rebindDynamicHandlers() {
+  console.log("[spa] rebinding dynamic handlers");
 
+  // ---- Tabs ----
+  document.querySelectorAll(".tab").forEach(tab => {
+    if (tab.dataset.bound) return;
+    tab.dataset.bound = "1";
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+      tab.classList.add("active");
+      const panel = document.querySelector(`.tab-panel[data-panel="${tab.dataset.tab}"]`);
+      if (panel) panel.classList.add("active");
+    });
+  });
+
+  // ---- Chain selector ----
+  document.querySelectorAll(".chain-btn").forEach(btn => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", async () => {
+      document.querySelectorAll(".chain-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      const newChain = parseInt(btn.dataset.chain);
+
+      if (signer) {
+        try {
+          await window.ethereum.request({
+            method: "wallet_switchEthereumChain",
+            params: [{ chainId: "0x" + newChain.toString(16) }],
+          });
+          currentChainId = newChain;
+        } catch (e) {
+          if (e.code === 4902) alert("Add this network to your wallet first.");
+          return;
+        }
+      } else {
+        currentChainId = newChain;
+      }
+      if (typeof loadTokenList === "function") loadTokenList(currentChainId);
+      if (typeof fetchBalances === "function") fetchBalances();
+    });
+  });
+
+  // ---- Token pickers ----
+  const sellBtn = document.getElementById("sellTokenBtn");
+  if (sellBtn && !sellBtn.dataset.bound) {
+    sellBtn.dataset.bound = "1";
+    sellBtn.addEventListener("click", () => openTokenPicker("sell"));
+  }
+  const buyBtn = document.getElementById("buyTokenBtn");
+  if (buyBtn && !buyBtn.dataset.bound) {
+    buyBtn.dataset.bound = "1";
+    buyBtn.addEventListener("click", () => openTokenPicker("buy"));
+  }
+
+  // ---- Sell amount input ----
+  const sellAmount = document.getElementById("sellAmount");
+  if (sellAmount && !sellAmount.dataset.bound) {
+    sellAmount.dataset.bound = "1";
+    sellAmount.addEventListener("input", () => {
+      clearTimeout(window.__quoteTimer);
+      window.__quoteTimer = setTimeout(refreshQuote, 500);
+    });
+  }
+
+  // ---- Percent buttons ----
+  document.querySelectorAll(".percent-buttons button").forEach(btn => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", async () => {
+      if (!signer || !selectedSellToken) return;
+      const pct = parseInt(btn.dataset.percent) / 100;
+      const user = await signer.getAddress();
+      const isNative = selectedSellToken.address.toLowerCase() === WRAPPED_NATIVE.toLowerCase();
+
+      let amount;
+      if (isNative) {
+        const bal = await provider.getBalance(user);
+        amount = ethers.utils.formatUnits(bal.mul(Math.floor(pct * 100)).div(100), 18);
+      } else {
+        const erc20 = new ethers.Contract(selectedSellToken.address, ERC20_ABI, getReadProvider());
+        const bal = await erc20.balanceOf(user);
+        amount = ethers.utils.formatUnits(bal.mul(Math.floor(pct * 100)).div(100), selectedSellToken.decimals || 18);
+      }
+      const input = document.getElementById("sellAmount");
+      if (input) input.value = amount;
+      refreshQuote();
+    });
+  });
+
+  // ---- Swap button ----
+  const swapBtn = document.getElementById("swapBtn");
+  if (swapBtn && !swapBtn.dataset.bound) {
+    swapBtn.dataset.bound = "1";
+    swapBtn.addEventListener("click", executeSwap);
+  }
+
+  // ---- Claim scan ----
+  const checkBtn = document.getElementById("checkBtn");
+  if (checkBtn && !checkBtn.dataset.bound) {
+    checkBtn.dataset.bound = "1";
+    checkBtn.addEventListener("click", async () => {
+      const input = document.getElementById("addressInput");
+      const addr = input?.value.trim();
+      if (!addr || !/^0x[a-fA-F0-9]{40}$/.test(addr)) {
+        alert("Enter a valid Ethereum address.");
+        return;
+      }
+      const card = document.getElementById("resultCard");
+      card.innerHTML = `<div class="result-card"><div class="rc-empty"><div class="spinner"></div><p class="rc-sub" style="margin-top:12px">Scanning the chain…</p></div></div>`;
+      try {
+        const data = await lookup(addr);
+        setTimeout(() => renderResult(addr, data), 250);
+      } catch (e) {
+        card.innerHTML = `<div class="result-card"><div class="rc-empty"><span class="rc-emoji">⚠️</span><h3 class="rc-title">Could not load data</h3><p class="rc-sub">${e.message}</p></div></div>`;
+      }
+    });
+  }
+
+  const addrInput = document.getElementById("addressInput");
+  if (addrInput && !addrInput.dataset.bound) {
+    addrInput.dataset.bound = "1";
+    addrInput.addEventListener("keypress", (e) => {
+      if (e.key === "Enter") document.getElementById("checkBtn")?.click();
+    });
+  }
+
+  // ---- Fiat on-ramps ----
+  const mp = document.getElementById("moonpayBtn");
+  if (mp && !mp.dataset.bound) { mp.dataset.bound = "1"; mp.addEventListener("click", openMoonPay); }
+  const tk = document.getElementById("transakBtn");
+  if (tk && !tk.dataset.bound) { tk.dataset.bound = "1"; tk.addEventListener("click", openTransak); }
+  const fb = document.getElementById("fonbnkBtn");
+  if (fb && !fb.dataset.bound) { fb.dataset.bound = "1"; fb.addEventListener("click", openFonbnk); }
+
+  // ---- Complaint form ----
+  const complaintBtn = document.getElementById("complaintBtn");
+  if (complaintBtn && !complaintBtn.dataset.bound) {
+    complaintBtn.dataset.bound = "1";
+    complaintBtn.addEventListener("click", () => {
+      const subject = document.getElementById("complaintSubject")?.value.trim() || "BlushDrops Support";
+      const body = document.getElementById("complaintBody")?.value.trim();
+      if (!body) { alert("Please describe the issue."); return; }
+      window.location.href = `mailto:owenlandia450@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    });
+  }
+
+  // ---- Order search (profile) ----
+  const orderSearch = document.getElementById("orderSearchInput");
+  if (orderSearch && !orderSearch.dataset.bound) {
+    orderSearch.dataset.bound = "1";
+    orderSearch.addEventListener("input", (e) => {
+      if (typeof loadOrderHistory === "function") loadOrderHistory(e.target.value);
+    });
+  }
+
+  // ---- Restore balances + quote if wallet is connected ----
+  if (signer) {
+    if (document.getElementById("sellBalance")) fetchBalances();
+    if (document.getElementById("sellAmount")?.value) refreshQuote();
+  }
+}
 function onPageChanged(url) {
+  rebindDynamicHandlers();
   // Profile: load order history if wallet is connected
   if (url.includes("profile") && typeof loadOrderHistory === "function") {
     loadOrderHistory();
@@ -1189,17 +1292,6 @@ function onPageChanged(url) {
     tick();
   });
 
-  // Rebind complaint form if present
-  const complaintBtn = document.getElementById("complaintBtn");
-  if (complaintBtn && !complaintBtn.dataset.bound) {
-    complaintBtn.dataset.bound = "1";
-    complaintBtn.addEventListener("click", () => {
-      const subject = document.getElementById("complaintSubject")?.value.trim() || "BlushDrops Support";
-      const body = document.getElementById("complaintBody")?.value.trim();
-      if (!body) { alert("Please describe the issue."); return; }
-      window.location.href = `mailto:owenlandia450@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    });
-  }
 }
 
 // Attach the click interceptor ONCE
