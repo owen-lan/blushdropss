@@ -2,6 +2,14 @@ const express = require('express');
 const path = require('path');
 
 const app = express();
+// Redirect www to non-www
+app.use((req, res, next) => {
+  if (req.headers.host && req.headers.host.startsWith('www.')) {
+    const newHost = req.headers.host.slice(4);
+    return res.redirect(301, `https://${newHost}${req.originalUrl}`);
+  }
+  next();
+});
 const PORT = process.env.PORT || 3000;
 
 const DATA_BASE = process.env.DATA_BASE ||
