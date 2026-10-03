@@ -240,23 +240,16 @@ function updateWalletUI() {
 }
 
 // ---- Silent auto-reconnect on every page load ----
-async function autoReconnect() {
-  if (typeof ethers === "undefined") return;
-  if (!window.ethereum) return;
+async function tryReconnect(providerObj) {
+  if (typeof ethers === "undefined") return false;
+  if (!providerObj) return false;
+  if (currentUser) return true; // already connected
 
   try {
-    // eth_accounts never prompts — returns already-authorized accounts
-    const accounts = await window.ethereum.request({ method: "eth_accounts" });
-    if (!accounts || accounts.length === 0) return;
+    const accounts = await providerObj.request({ method: "eth_accounts" });
+    if (!accounts || accounts.length === 0) return false;
 
-    // If we have multiple providers, find the one the user picked before
-    let chosenProvider = window.ethereum;
-    const savedRdns = localStorage.getItem(WALLET_STORAGE_KEY);
-    if (savedRdns && detectedWallets.has(savedRdns)) {
-      chosenProvider = detectedWallets.get(savedRdns).provider;
-    }
-
-    provider = new ethers.providers.Web3Provider(chosenProvider);
+    provider = new ethers.providers.Web3Provider(providerObj);
     signer = provider.getSigner();
     currentUser = accounts[0];
 
@@ -272,8 +265,34 @@ async function autoReconnect() {
     if (typeof fetchBalances === "function") fetchBalances();
 
     window.dispatchEvent(new CustomEvent("walletConnected", { detail: { address: currentUser } }));
+    return true;
   } catch (e) {
-    console.warn("[wallet] auto-reconnect failed:", e);
+    console.warn("[wallet] reconnect failed:", e);
+    return false;
+  }
+}
+
+async function autoReconnect() {
+  // Give EIP-6963 a moment to announce providers
+  await new Promise(r => setTimeout(r, 200));
+
+  const savedRdns = localStorage.getItem(WALLET_STORAGE_KEY);
+
+  // Try the wallet the user previously picked
+  if (savedRdns && detectedWallets.has(savedRdns)) {
+    const ok = await tryReconnect(detectedWallets.get(savedRdns).provider);
+    if (ok) return;
+  }
+
+  // Fallback: try the first detected wallet
+  for (const entry of detectedWallets.values()) {
+    const ok = await tryReconnect(entry.provider);
+    if (ok) return;
+  }
+
+  // Final fallback: window.ethereum (legacy)
+  if (window.ethereum) {
+    await tryReconnect(window.ethereum);
   }
 }
 
@@ -282,6 +301,8 @@ window.addEventListener("eip6963:announceProvider", (event) => {
   const { info, provider } = event.detail;
   detectedWallets.set(info.rdns, { info, provider });
   refreshWalletList();
+  // If we've not reconnected yet and the wallet injects late, try now
+  if (!currentUser) autoReconnect();
 });
 window.dispatchEvent(new Event("eip6963:requestProvider"));
 
@@ -331,15 +352,16 @@ function setupWalletHandlers() {
       openWalletModal();
     });
   }
-
-  // Fire auto-reconnect AFTER everything is wired
-  autoReconnect();
 }
 
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", setupWalletHandlers);
+  document.addEventListener("DOMContentLoaded", () => {
+    setupWalletHandlers();
+    autoReconnect();
+  });
 } else {
   setupWalletHandlers();
+  autoReconnect();
 }
 // ---------- CHAIN SELECTOR ----------
 document.querySelectorAll(".chain-btn").forEach(btn => {
