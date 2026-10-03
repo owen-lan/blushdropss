@@ -6,14 +6,7 @@ const PORT = process.env.PORT || 3000;
 const DATA_BASE = process.env.DATA_BASE ||
   'https://github.com/owen-lan/blushdropss/releases/download/v2';
 
-// ---------- Redirect www → non-www ----------
-app.use((req, res, next) => {
-  if (req.headers.host && req.headers.host.startsWith('www.')) {
-    const newHost = req.headers.host.slice(4);
-    return res.redirect(301, `https://${newHost}${req.originalUrl}`);
-  }
-  next();
-});
+
 
 // ---------- In-memory merkle index + shard cache ----------
 let LIGHT_INDEX = null;
