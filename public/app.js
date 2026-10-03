@@ -107,46 +107,10 @@ async function checkOnChainClaimed(index) {
   }
 }
 
-// ---------- WALLET DETECTION ----------
+// ============================================================
+// WALLET — MODAL, DETECTION, CONNECT (DOM-safe)
+// ============================================================
 const detectedWallets = new Map();
-window.addEventListener("eip6963:announceProvider", (event) => {
-  const { info, provider } = event.detail;
-  detectedWallets.set(info.rdns, { info, provider });
-  refreshWalletList();
-});
-window.dispatchEvent(new Event("eip6963:requestProvider"));
-
-function legacyDetect() {
-  if (detectedWallets.size > 0) return;
-  if (typeof window.ethereum === "undefined") return;
-  const providers = window.ethereum.providers || [window.ethereum];
-  const seen = new Set();
-  providers.forEach((p) => {
-    let name = null, rdns = null;
-    if (p.isBraveWallet) { name = "Brave Wallet"; rdns = "com.brave.wallet"; }
-    else if (p.isRabby) { name = "Rabby"; rdns = "io.rabby"; }
-    else if (p.isMetaMask) { name = "MetaMask"; rdns = "io.metamask"; }
-    else if (p.isCoinbaseWallet) { name = "Coinbase Wallet"; rdns = "com.coinbase.wallet"; }
-    else if (p.isTrust) { name = "Trust Wallet"; rdns = "com.trustwallet.app"; }
-    else if (p.isOKXWallet) { name = "OKX Wallet"; rdns = "com.okex.wallet"; }
-    if (!name || seen.has(rdns)) return;
-    seen.add(rdns);
-    detectedWallets.set(rdns, { info: { name, icon: null, rdns }, provider: p });
-  });
-  refreshWalletList();
-}
-setTimeout(legacyDetect, 200);
-
-// ---------- WALLET MODAL ----------
-const walletModal = document.getElementById("walletModal");
-const walletList = document.getElementById("walletList");
-const walletEmpty = document.getElementById("walletEmpty");
-
-function openWalletModal() { walletModal.classList.remove("hidden"); document.body.style.overflow = "hidden"; refreshWalletList(); }
-function closeWalletModal() { walletModal.classList.add("hidden"); document.body.style.overflow = ""; }
-if (document.getElementById("walletClose")) document.getElementById("walletClose").addEventListener("click", closeWalletModal);
-if (document.getElementById("walletBackdrop")) document.getElementById("walletBackdrop").addEventListener("click", closeWalletModal);
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeWalletModal(); });
 
 function colorForName(name) {
   const colors = [["#ff8ac1","#a855f7"],["#7dd3fc","#3b82f6"],["#6ee7b7","#059669"],["#fbbf24","#f59e0b"],["#f472b6","#db2777"]];
@@ -157,43 +121,192 @@ function colorForName(name) {
 
 function renderWalletItem(name, icon, providerObj) {
   const btn = document.createElement("button");
-  btn.className = "wallet-item"; btn.type = "button";
-  const iconHtml = icon ? `<img src="${icon}" alt="${name}" />` : (() => { const [c1, c2] = colorForName(name); return `<span class="wallet-letter" style="background:linear-gradient(135deg,${c1},${c2})">${name[0].toUpperCase()}</span>`; })();
-  btn.innerHTML = `<span class="wallet-item-icon">${iconHtml}</span><span class="wallet-item-info"><span class="wallet-item-name">${name}</span><span class="wallet-item-tag">Browser extension</span></span><span class="wallet-item-arrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></span>`;
+  btn.className = "wallet-item";
+  btn.type = "button";
+  const iconHtml = icon
+    ? `<img src="${icon}" alt="${name}" />`
+    : (() => {
+        const [c1, c2] = colorForName(name);
+        return `<span class="wallet-letter" style="background:linear-gradient(135deg,${c1},${c2})">${name[0].toUpperCase()}</span>`;
+      })();
+  btn.innerHTML = `
+    <span class="wallet-item-icon">${iconHtml}</span>
+    <span class="wallet-item-info">
+      <span class="wallet-item-name">${name}</span>
+      <span class="wallet-item-tag">Browser extension</span>
+    </span>
+    <span class="wallet-item-arrow">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
+    </span>`;
   btn.addEventListener("click", () => connectWithProvider(providerObj));
   return btn;
 }
+
 function refreshWalletList() {
-  if (!walletListEl) return;
-  walletListEl.innerHTML = "";
+  const listEl = document.getElementById("walletList");
+  const emptyEl = document.getElementById("walletEmpty");
+  if (!listEl) return;
+  listEl.innerHTML = "";
   if (detectedWallets.size === 0) {
-    walletListEl.classList.add("hidden");
-    if (walletEmptyEl) walletEmptyEl.classList.remove("hidden");
+    listEl.classList.add("hidden");
+    if (emptyEl) emptyEl.classList.remove("hidden");
     return;
   }
-  walletListEl.classList.remove("hidden");
-  if (walletEmptyEl) walletEmptyEl.classList.add("hidden");
+  listEl.classList.remove("hidden");
+  if (emptyEl) emptyEl.classList.add("hidden");
   for (const { info, provider } of detectedWallets.values()) {
-    walletListEl.appendChild(renderWalletItem(info.name, info.icon, provider));
+    listEl.appendChild(renderWalletItem(info.name, info.icon, provider));
   }
 }
 
-// ---------- WALLET MODAL ----------
 function openWalletModal() {
-  if (!walletModalEl) return;
-  walletModalEl.classList.remove("hidden");
+  const modalEl = document.getElementById("walletModal");
+  console.log("[wallet] openWalletModal called, modalEl =", modalEl);
+
+  // Fallback: if no modal exists on this page, connect directly
+  if (!modalEl) {
+    const provider = (detectedWallets.values().next().value || {}).provider;
+    if (provider) {
+      connectWithProvider(provider);
+    } else if (window.ethereum) {
+      connectWithProvider(window.ethereum);
+    } else {
+      alert("Install MetaMask or another browser wallet to connect.");
+    }
+    return;
+  }
+  modalEl.classList.remove("hidden");
   document.body.style.overflow = "hidden";
   refreshWalletList();
 }
+
 function closeWalletModal() {
-  if (!walletModalEl) return;
-  walletModalEl.classList.add("hidden");
+  const modalEl = document.getElementById("walletModal");
+  if (!modalEl) return;
+  modalEl.classList.add("hidden");
   document.body.style.overflow = "";
 }
-if (document.getElementById("walletClose")) document.getElementById("walletClose").addEventListener("click", closeWalletModal);
-if (document.getElementById("walletBackdrop")) document.getElementById("walletBackdrop").addEventListener("click", closeWalletModal);
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeWalletModal(); });
 
+async function connectWithProvider(providerObj) {
+  console.log("[wallet] connectWithProvider called");
+  try {
+    if (!providerObj) { alert("Wallet provider not available."); return; }
+
+    provider = new ethers.providers.Web3Provider(providerObj);
+    await provider.send("eth_requestAccounts", []);
+    signer = provider.getSigner();
+    currentUser = await signer.getAddress();
+    console.log("[wallet] connected as", currentUser);
+
+    const btn = document.getElementById("connectBtn");
+    const txt = document.getElementById("connectText");
+    if (btn) btn.classList.add("connected");
+    if (txt) txt.textContent = currentUser.slice(0, 6) + "…" + currentUser.slice(-4);
+
+    const input = document.getElementById("addressInput");
+    if (input && !input.value.trim()) input.value = currentUser;
+
+    closeWalletModal();
+
+    providerObj.on?.("accountsChanged", (accounts) => {
+      if (!accounts || accounts.length === 0) {
+        currentUser = null;
+        if (btn) btn.classList.remove("connected");
+        if (txt) txt.textContent = "Connect";
+      } else {
+        currentUser = accounts[0];
+        if (txt) txt.textContent = currentUser.slice(0, 6) + "…" + currentUser.slice(-4);
+        if (typeof fetchBalances === "function") fetchBalances();
+      }
+    });
+    providerObj.on?.("chainChanged", () => window.location.reload());
+
+    const net = await provider.getNetwork();
+    currentChainId = net.chainId;
+    document.querySelectorAll(".chain-btn").forEach(b => {
+      b.classList.toggle("active", parseInt(b.dataset.chain) === currentChainId);
+    });
+
+    if (typeof loadTokenList === "function") loadTokenList(currentChainId);
+    if (typeof fetchBalances === "function") fetchBalances();
+
+    window.dispatchEvent(new CustomEvent("walletConnected", { detail: { address: currentUser } }));
+  } catch (err) {
+    console.error("[wallet] connect failed:", err);
+    if (err.code === 4001) return;
+    alert("Failed to connect: " + (err.message || "unknown error"));
+  }
+}
+
+// ---- EIP-6963 ----
+window.addEventListener("eip6963:announceProvider", (event) => {
+  const { info, provider } = event.detail;
+  detectedWallets.set(info.rdns, { info, provider });
+  refreshWalletList();
+});
+window.dispatchEvent(new Event("eip6963:requestProvider"));
+
+// ---- Legacy detection ----
+function legacyDetect() {
+  if (detectedWallets.size > 0) return;
+  if (typeof window.ethereum === "undefined") return;
+  const providers = window.ethereum.providers || [window.ethereum];
+  const seen = new Set();
+  providers.forEach((p) => {
+    let name = null, rdns = null;
+    if (p.isBraveWallet)          { name = "Brave Wallet";    rdns = "com.brave.wallet"; }
+    else if (p.isRabby)           { name = "Rabby";           rdns = "io.rabby"; }
+    else if (p.isMetaMask)        { name = "MetaMask";        rdns = "io.metamask"; }
+    else if (p.isCoinbaseWallet)  { name = "Coinbase Wallet"; rdns = "com.coinbase.wallet"; }
+    else if (p.isTrust)           { name = "Trust Wallet";    rdns = "com.trustwallet.app"; }
+    else if (p.isOKXWallet)       { name = "OKX Wallet";      rdns = "com.okex.wallet"; }
+    if (!name || seen.has(rdns)) return;
+    seen.add(rdns);
+    detectedWallets.set(rdns, { info: { name, icon: null, rdns }, provider: p });
+  });
+  refreshWalletList();
+}
+setTimeout(legacyDetect, 300);
+
+// ============================================================
+// DOM-READY SETUP — bind all click handlers safely
+// ============================================================
+function setupWalletHandlers() {
+  console.log("[wallet] setupWalletHandlers running");
+
+  const closeBtn = document.getElementById("walletClose");
+  const backdrop = document.getElementById("walletBackdrop");
+  const connectBtn = document.getElementById("connectBtn");
+
+  if (closeBtn) closeBtn.addEventListener("click", closeWalletModal);
+  if (backdrop) backdrop.addEventListener("click", closeWalletModal);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeWalletModal(); });
+
+  if (connectBtn) {
+    connectBtn.addEventListener("click", () => {
+      console.log("[wallet] connect button clicked, currentUser =", currentUser);
+      if (currentUser) {
+        navigator.clipboard?.writeText(currentUser);
+        const t = document.getElementById("connectText");
+        if (!t) return;
+        const orig = t.textContent;
+        t.textContent = "Copied!";
+        setTimeout(() => (t.textContent = orig), 1200);
+        return;
+      }
+      openWalletModal();
+    });
+    console.log("[wallet] connect button handler attached ✅");
+  } else {
+    console.warn("[wallet] connectBtn not found in DOM ⚠️");
+  }
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", setupWalletHandlers);
+} else {
+  setupWalletHandlers();
+}
 // ---------- CHAIN SELECTOR ----------
 document.querySelectorAll(".chain-btn").forEach(btn => {
   btn.addEventListener("click", async () => {
