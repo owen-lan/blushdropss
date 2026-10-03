@@ -1096,3 +1096,158 @@ window.addEventListener("load", async () => {
     loadTokenList(1); // cold start, no wallet — still load token list
   }
 });
+// ============================================================
+// SPA-STYLE NAVIGATION — no reload, wallet stays connected
+// ============================================================
+const INTERNAL_ROUTES = [
+  "/", "/index.html",
+  "/profile.html", "/community.html", "/support.html",
+  "/profile", "/community", "/support",
+];
+
+function isInternalRoute(url) {
+  return INTERNAL_ROUTES.some(r => url === r || url.endsWith(r));
+}
+
+function updateNavActive(url) {
+  document.querySelectorAll(".nav-links a").forEach(link => {
+    const href = (link.getAttribute("href") || "").replace(/^https?:\/\/[^/]+/, "");
+    const isActive = href && url.includes(href.replace(/\.html$/, "").replace(/^\//, ""));
+    link.classList.toggle("active", !!isActive);
+  });
+}
+
+async function navigateTo(url, push = true) {
+  const cleanUrl = url.replace(/^https?:\/\/[^/]+/, "");
+
+  try {
+    const res = await fetch(cleanUrl, { headers: { "X-Requested-With": "spa" } });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+
+    const html = await res.text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+
+    const newView = doc.getElementById("route-view");
+    const currentView = document.getElementById("route-view");
+
+    if (!newView || !currentView) {
+      // Structure mismatch — fall back to full navigation
+      window.location.href = cleanUrl;
+      return;
+    }
+
+    // Swap content
+    currentView.innerHTML = newView.innerHTML;
+
+    // Update <title>
+    if (doc.title) document.title = doc.title;
+
+    // Update URL (no reload)
+    if (push) history.pushState({ url: cleanUrl }, "", cleanUrl);
+
+    // Update nav active state
+    updateNavActive(cleanUrl);
+
+    // Scroll to top
+    window.scrollTo({ top: 0, behavior: "instant" });
+
+    // Fire page-specific logic
+    onPageChanged(cleanUrl);
+
+    console.log("[spa] navigated →", cleanUrl);
+  } catch (e) {
+    console.warn("[spa] fallback to reload:", e);
+    window.location.href = cleanUrl;
+  }
+}
+
+function onPageChanged(url) {
+  // Profile page — load order history if wallet is connected
+  if (url.includes("profile")) {
+    if (typeof loadOrderHistory === "function" && currentUser) {
+      loadOrderHistory();
+    } else if (typeof loadOrderHistory === "function") {
+      // Show "connect wallet" state
+      loadOrderHistory();
+    }
+  }
+
+  // Re-trigger any count-up animations on the new content
+  document.querySelectorAll("[data-count]").forEach(el => {
+    if (el.dataset.animated) return;
+    el.dataset.animated = "1";
+    const target = +el.dataset.count;
+    let current = 0;
+    const step = target / 60;
+    const tick = () => {
+      current += step;
+      if (current >= target) current = target;
+      el.textContent = "$" + Math.floor(current).toLocaleString();
+      if (current < target) requestAnimationFrame(tick);
+    };
+    tick();
+  });
+
+  // Re-bind any buttons that were inside the swapped content
+  bindPageButtons();
+}
+
+function bindPageButtons() {
+  // Complaint form
+  const complaintBtn = document.getElementById("complaintBtn");
+  if (complaintBtn && !complaintBtn.dataset.bound) {
+    complaintBtn.dataset.bound = "1";
+    complaintBtn.addEventListener("click", () => {
+      const subject = document.getElementById("complaintSubject")?.value.trim() || "BlushDrops Support";
+      const body = document.getElementById("complaintBody")?.value.trim();
+      if (!body) { alert("Please describe the issue."); return; }
+      window.location.href = `mailto:owenlandia450@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    });
+  }
+
+  // Order search
+  const searchInput = document.getElementById("orderSearchInput");
+  if (searchInput && !searchInput.dataset.bound) {
+    searchInput.dataset.bound = "1";
+    searchInput.addEventListener("input", (e) => {
+      if (typeof loadOrderHistory === "function") loadOrderHistory(e.target.value);
+    });
+  }
+
+  // Profile page — trigger load if wallet is connected
+  if (document.getElementById("orderHistoryList") && currentUser) {
+    if (typeof loadOrderHistory === "function") loadOrderHistory();
+  }
+}
+
+// Intercept all internal link clicks
+document.addEventListener("click", (e) => {
+  const link = e.target.closest("a");
+  if (!link) return;
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+
+  let href = link.getAttribute("href");
+  if (!href) return;
+
+  // Ignore external, anchors, mailto, tel
+  if (href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:")) return;
+  if (/^https?:\/\//.test(href) && !href.startsWith(window.location.origin)) {
+    link.setAttribute("target", "_blank");
+    link.setAttribute("rel", "noopener");
+    return;
+  }
+
+  const url = href.replace(/^https?:\/\/[^/]+/, "");
+  if (!isInternalRoute(url)) return;
+
+  e.preventDefault();
+  navigateTo(url);
+});
+
+// Handle back/forward buttons
+window.addEventListener("popstate", () => {
+  navigateTo(window.location.pathname + window.location.search, false);
+});
+
+// On page load, mark the current route active
+updateNavActive(window.location.pathname);
