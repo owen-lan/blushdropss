@@ -1,13 +1,13 @@
 // ============================================================
-// BLUSHDROPS — MAIN APP (clean rewrite with event delegation)
+// BLUSHDROPS — app.js (complete clean rewrite)
 // ============================================================
 
 const CONFIG = {
   SPLITTER_ADDRESS: "0x0000000000000000000000000000000000000000",
   RPC_URLS: ["https://eth-mainnet.g.alchemy.com/v2/AkH_F7btslPyNlLzxXJth"],
   UNI_DISTRIBUTOR: "0x090D4613473dEE047c3f2706764f49E0821D256e",
-  ZEROX_API_KEY: "YOUR_0X_API_KEY",
-  SWAP_FEE_RECIPIENT: "0xYOUR_WALLET_ADDRESS",
+  ZEROX_API_KEY: "8fc750e2-ebc9-4211-b32e-a035fcab239c",
+  SWAP_FEE_RECIPIENT: "0xB1204D46fbc488a6606a00ce610e9Cad61483231",
   SWAP_FEE_BPS: 50,
   MOONPAY_API_KEY: "pk_live_YOUR_MOONPAY_KEY",
   TRANSAK_API_KEY: "YOUR_TRANSAK_API_KEY",
@@ -49,6 +49,7 @@ let currentQuote = null;
 let priceCache = {};
 let priceCacheTime = 0;
 let quoteTimer = null;
+let visibleTokens = [];
 const detectedWallets = new Map();
 
 // ============================================================
@@ -71,6 +72,10 @@ function getReadProvider() {
   return readProvider;
 }
 
+function isValidAddress(a) {
+  return typeof a === "string" && /^0x[a-fA-F0-9]{40}$/.test(a);
+}
+
 // ============================================================
 // CURSOR
 // ============================================================
@@ -87,7 +92,7 @@ function getReadProvider() {
 })();
 
 // ============================================================
-// CHAIN HELPERS
+// BASE TOKENS PER CHAIN
 // ============================================================
 function getBaseTokens(chainId) {
   const bases = {
@@ -128,7 +133,7 @@ function getBaseTokens(chainId) {
 }
 
 // ============================================================
-// WALLET
+// WALLET UI
 // ============================================================
 function updateWalletUI() {
   const btn = document.getElementById("connectBtn");
@@ -151,35 +156,29 @@ function openWalletModal() {
   modal.classList.remove("hidden");
   document.body.style.overflow = "hidden";
 
-  // If connected, show a disconnect banner at the top of the list
   const listEl = document.getElementById("walletList");
   if (listEl && currentUser) {
     listEl.innerHTML = `
-      <div style="padding: 16px; border-radius: 14px; background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.3); margin-bottom: 12px;">
-        <div style="font-size: 12px; color: rgba(244,241,255,0.55); margin-bottom: 4px;">CONNECTED</div>
-        <div style="font-family: 'JetBrains Mono', monospace; font-size: 14px; word-break: break-all;">${currentUser}</div>
-        <button id="disconnectBtn" style="margin-top: 12px; padding: 8px 16px; border-radius: 10px; background: rgba(248,113,113,0.15); border: 1px solid rgba(248,113,113,0.35); color: #fca5a5; font-size: 13px; cursor: pointer;">
-          Disconnect
-        </button>
-      </div>
-    `;
+      <div style="padding:16px;border-radius:14px;background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.3);margin-bottom:12px;">
+        <div style="font-size:12px;color:rgba(244,241,255,0.55);margin-bottom:4px;">CONNECTED</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:14px;word-break:break-all;">${currentUser}</div>
+        <button id="disconnectBtn" style="margin-top:12px;padding:8px 16px;border-radius:10px;background:rgba(248,113,113,0.15);border:1px solid rgba(248,113,113,0.35);color:#fca5a5;font-size:13px;cursor:pointer;">Disconnect</button>
+      </div>`;
     const dBtn = document.getElementById("disconnectBtn");
-    if (dBtn) {
-      dBtn.addEventListener("click", () => {
-        currentUser = null;
-        signer = null;
-        provider = null;
-        try { localStorage.removeItem(WALLET_STORAGE_KEY); } catch (_) {}
-        updateWalletUI();
-        closeWalletModal();
-        window.dispatchEvent(new CustomEvent("walletDisconnected"));
-      });
-    }
+    if (dBtn) dBtn.addEventListener("click", () => {
+      currentUser = null;
+      signer = null;
+      provider = null;
+      try { localStorage.removeItem(WALLET_STORAGE_KEY); } catch (_) {}
+      updateWalletUI();
+      closeWalletModal();
+    });
     return;
   }
 
   refreshWalletList();
 }
+
 function closeWalletModal() {
   const modal = document.getElementById("walletModal");
   if (!modal) return;
@@ -210,7 +209,6 @@ function refreshWalletList() {
           return `<span class="wallet-letter" style="background:linear-gradient(135deg,${c1},${c2})">${info.name[0].toUpperCase()}</span>`;
         })();
     btn.innerHTML = `<span class="wallet-item-icon">${iconHtml}</span><span class="wallet-item-info"><span class="wallet-item-name">${info.name}</span><span class="wallet-item-tag">Browser extension</span></span><span class="wallet-item-arrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></span>`;
-    btn.dataset.rdns = rdns;
     btn.addEventListener("click", () => connectWithProvider(p, rdns));
     listEl.appendChild(btn);
   }
@@ -237,7 +235,7 @@ async function connectWithProvider(providerObj, rdns) {
         currentUser = accts[0];
       }
       updateWalletUI();
-      if (typeof fetchBalances === "function") fetchBalances();
+      fetchBalances();
     });
     providerObj.on?.("chainChanged", () => window.location.reload());
 
@@ -245,9 +243,8 @@ async function connectWithProvider(providerObj, rdns) {
     currentChainId = net.chainId;
     document.querySelectorAll(".chain-btn").forEach(b => b.classList.toggle("active", +b.dataset.chain === currentChainId));
 
-    loadTokenList(currentChainId);
-    if (typeof fetchBalances === "function") fetchBalances();
-
+    await loadTokenList(currentChainId);
+    fetchBalances();
     window.dispatchEvent(new CustomEvent("walletConnected", { detail: { address: currentUser } }));
   } catch (err) {
     if (err.code === 4001) return;
@@ -293,10 +290,10 @@ async function autoReconnect() {
     currentChainId = net.chainId;
     document.querySelectorAll(".chain-btn").forEach(b => b.classList.toggle("active", +b.dataset.chain === currentChainId));
 
-    loadTokenList(currentChainId);
-    if (typeof fetchBalances === "function") fetchBalances();
-
+    await loadTokenList(currentChainId);
+    fetchBalances();
     window.dispatchEvent(new CustomEvent("walletConnected", { detail: { address: currentUser } }));
+    console.log("[wallet] reconnected as", currentUser);
     return true;
   } catch (_) {
     return false;
@@ -314,7 +311,7 @@ function startReconnectLoop() {
   tick();
 }
 
-// ---- EIP-6963 + legacy ----
+// ---- Wallet detection ----
 window.addEventListener("eip6963:announceProvider", (event) => {
   const { info, provider: p } = event.detail;
   detectedWallets.set(info.rdns, { info, provider: p });
@@ -347,12 +344,18 @@ setTimeout(legacyDetect, 300);
 // TOKEN LIST
 // ============================================================
 async function loadTokenList(chainId) {
-  const base = getBaseTokens(chainId);
-  allTokens = [...base];
+  // Skip if already loaded for this chain and selected tokens are valid
+  if (allTokens.length > 50 && allTokens[0]?.chainId === chainId && selectedSellToken?.address && selectedBuyToken?.address) {
+    console.log(`[tokens] chain ${chainId} already loaded (${allTokens.length})`);
+    return;
+  }
 
-  if (!selectedSellToken || selectedSellToken.chainId !== chainId) selectedSellToken = { ...base[0], chainId };
-  if (!selectedBuyToken  || selectedBuyToken.chainId  !== chainId) selectedBuyToken  = { ...(base[1] || base[0]), chainId };
+  const base = getBaseTokens(chainId);
+  allTokens = base.map(t => ({ ...t, chainId }));
+  selectedSellToken = { ...base[0], chainId };
+  selectedBuyToken = { ...(base[1] || base[0]), chainId };
   updateTokenUI();
+  console.log(`[tokens] base set: ${selectedSellToken.symbol}/${selectedBuyToken.symbol}`);
 
   const platform = CHAINS[chainId]?.cgPlatform;
   if (!platform) return;
@@ -366,24 +369,17 @@ async function loadTokenList(chainId) {
     const data = await res.json();
     const tokens = data.tokens || [];
     const seen = new Set(base.map(t => t.address.toLowerCase()));
+
     for (const t of tokens) {
       if (!t.address || !t.symbol) continue;
       const addr = t.address.toLowerCase();
       if (seen.has(addr)) continue;
       seen.add(addr);
-      allTokens.push({
-        symbol: t.symbol,
-        name: t.name || t.symbol,
-        address: t.address,
-        logo: t.logoURI || "",
-        decimals: t.decimals != null ? t.decimals : 18,
-        chainId,
-      });
+      allTokens.push({ symbol: t.symbol, name: t.name || t.symbol, address: t.address, logo: t.logoURI || "", decimals: t.decimals != null ? t.decimals : 18, chainId });
     }
-    console.log(`[tokens] ${allTokens.length} tokens for chain ${chainId}`);
+    console.log(`[tokens] ${allTokens.length} total for chain ${chainId}`);
   } catch (e) {
-    console.warn("[tokens] failed:", e);
-    allTokens = base.map(t => ({ ...t, chainId }));
+    console.warn("[tokens] extended fetch failed:", e.message);
   }
 }
 
@@ -404,46 +400,61 @@ function updateTokenUI() {
 function openTokenPicker(target) {
   pickerTarget = target;
   const modal = document.getElementById("tokenPicker");
-  if (!modal) return;
+  if (!modal) { console.warn("[picker] modal missing"); return; }
   modal.classList.remove("hidden");
   const input = document.getElementById("tokenSearch");
   if (input) { input.value = ""; setTimeout(() => input.focus(), 50); }
   renderTokenList(allTokens.slice(0, 50));
+  console.log(`[picker] opened for ${target}, ${allTokens.length} tokens`);
 }
+
 function closeTokenPicker() {
   const modal = document.getElementById("tokenPicker");
   if (modal) modal.classList.add("hidden");
 }
+
 function renderTokenList(tokens) {
   const listEl = document.getElementById("tokenList");
   if (!listEl) return;
   listEl.innerHTML = "";
-  if (!tokens.length) { listEl.innerHTML = `<div class="token-empty">No tokens found</div>`; return; }
-  tokens.slice(0, 100).forEach(t => {
+  visibleTokens = tokens.slice(0, 100);
+  if (!visibleTokens.length) {
+    listEl.innerHTML = `<div class="token-empty">No tokens found</div>`;
+    return;
+  }
+  visibleTokens.forEach((t, i) => {
     const item = document.createElement("button");
     item.className = "token-list-item";
     item.type = "button";
-    const logoHtml = t.logo ? `<img src="${t.logo}" alt="" onerror="this.style.display='none'" />` : `<img src="" style="display:none" />`;
+    item.dataset.tokenIndex = i;
+    const logoHtml = t.logo
+      ? `<img src="${t.logo}" alt="" onerror="this.style.display='none'" />`
+      : `<img src="" style="display:none" />`;
     item.innerHTML = `${logoHtml}<div class="token-list-info"><div class="token-list-symbol">${t.symbol}</div><div class="token-list-name">${t.name}</div></div><div class="token-list-address">${t.address.slice(0, 6)}…${t.address.slice(-4)}</div>`;
-    item.addEventListener("click", () => selectToken(t));
     listEl.appendChild(item);
   });
 }
+
 function selectToken(token) {
+  if (!token || !token.address) { console.warn("[picker] bad token", token); return; }
   token.chainId = currentChainId;
   if (pickerTarget === "sell") selectedSellToken = token;
   else selectedBuyToken = token;
+  console.log(`[picker] ${pickerTarget} =`, token.symbol, token.address);
   updateTokenUI();
   closeTokenPicker();
-  fetchBalances();
-  const amt = document.getElementById("sellAmount")?.value;
-  if (amt && parseFloat(amt) > 0) refreshQuote();
+  setTimeout(() => {
+    fetchBalances();
+    const amt = document.getElementById("sellAmount")?.value;
+    if (amt && parseFloat(amt) > 0) refreshQuote();
+  }, 100);
 }
-function handleTokenSearchInput(e) {
-  const q = e.target.value.toLowerCase().trim();
+
+function handleTokenSearch(q) {
+  q = q.toLowerCase().trim();
   if (!q) { renderTokenList(allTokens.slice(0, 50)); return; }
   if (/^0x[a-f0-9]{40}$/.test(q)) {
-    renderTokenList([{ symbol: "Custom", name: q.slice(0,6)+"…"+q.slice(-4), address: e.target.value, logo: "", decimals: 18 }]);
+    renderTokenList([{ symbol: "Custom", name: q.slice(0,6)+"…"+q.slice(-4), address: q, logo: "", decimals: 18 }]);
     return;
   }
   renderTokenList(allTokens.filter(t => t.symbol.toLowerCase().includes(q) || t.name.toLowerCase().includes(q)));
@@ -492,17 +503,17 @@ async function fetchPrices(chainId, tokenAddresses) {
 // BALANCES
 // ============================================================
 async function fetchBalances() {
-  // Reject if tokens aren't ready
-  if (!selectedSellToken?.address || !selectedBuyToken?.address) {
-    console.log("[balance] skipped — tokens not ready");
-    return;
-  }
-
   const sellBalEl = document.getElementById("sellBalance");
   const buyBalEl = document.getElementById("buyBalance");
   const sellUsdEl = document.getElementById("sellUsd");
   const buyUsdEl = document.getElementById("buyUsd");
   if (!sellBalEl || !buyBalEl) return;
+
+  // Guarantee tokens exist and have addresses
+  if (!selectedSellToken?.address || !selectedBuyToken?.address) {
+    console.log("[balance] skipped — tokens not ready");
+    return;
+  }
 
   if (!signer) {
     sellBalEl.textContent = `0 ${selectedSellToken.symbol}`;
@@ -517,19 +528,23 @@ async function fetchBalances() {
 
   try {
     const user = await signer.getAddress();
+    if (!isValidAddress(user)) { console.log("[balance] invalid user"); return; }
+
     const mc = new ethers.Contract(MULTICALL_ADDRESS, MULTICALL_ABI, getReadProvider());
     const iface = new ethers.utils.Interface(ERC20_ABI);
     const NATIVE = WRAPPED_NATIVE.toLowerCase();
-    const isSellNative = selectedSellToken.address.toLowerCase() === NATIVE;
-    const isBuyNative = selectedBuyToken.address.toLowerCase() === NATIVE;
+    const sellAddr = selectedSellToken.address;
+    const buyAddr = selectedBuyToken.address;
+    const isSellNative = sellAddr.toLowerCase() === NATIVE;
+    const isBuyNative = buyAddr.toLowerCase() === NATIVE;
 
     const calls = [
       isSellNative
         ? { target: MULTICALL_ADDRESS, allowFailure: true, callData: mc.interface.encodeFunctionData("getEthBalance", [user]) }
-        : { target: selectedSellToken.address, allowFailure: true, callData: iface.encodeFunctionData("balanceOf", [user]) },
+        : { target: sellAddr, allowFailure: true, callData: iface.encodeFunctionData("balanceOf", [user]) },
       isBuyNative
         ? { target: MULTICALL_ADDRESS, allowFailure: true, callData: mc.interface.encodeFunctionData("getEthBalance", [user]) }
-        : { target: selectedBuyToken.address, allowFailure: true, callData: iface.encodeFunctionData("balanceOf", [user]) },
+        : { target: buyAddr, allowFailure: true, callData: iface.encodeFunctionData("balanceOf", [user]) },
     ];
 
     const results = await mc.callStatic.aggregate3(calls);
@@ -541,17 +556,14 @@ async function fetchBalances() {
     sellBalEl.textContent = `${parseFloat(sellBal).toFixed(6)} ${selectedSellToken.symbol}`;
     buyBalEl.textContent = `${parseFloat(buyBal).toFixed(6)} ${selectedBuyToken.symbol}`;
 
-    fetchPrices(currentChainId, [selectedSellToken.address, selectedBuyToken.address]).then(prices => {
-      const sp = prices[selectedSellToken.address.toLowerCase()] || 0;
-      const bp = prices[selectedBuyToken.address.toLowerCase()] || 0;
+    fetchPrices(currentChainId, [sellAddr, buyAddr]).then(prices => {
+      const sp = prices[sellAddr.toLowerCase()] || 0;
+      const bp = prices[buyAddr.toLowerCase()] || 0;
       if (sellUsdEl) sellUsdEl.textContent = sp ? `$${(parseFloat(sellBal) * sp).toFixed(2)}` : "—";
       if (buyUsdEl) buyUsdEl.textContent = bp ? `$${(parseFloat(buyBal) * bp).toFixed(2)}` : "—";
-    }).catch(() => {
-      if (sellUsdEl) sellUsdEl.textContent = "—";
-      if (buyUsdEl) buyUsdEl.textContent = "—";
-    });
+    }).catch(() => {});
   } catch (e) {
-    console.warn("[balance] failed:", e);
+    console.warn("[balance] failed:", e.message);
     sellBalEl.textContent = `0 ${selectedSellToken.symbol}`;
     buyBalEl.textContent = `0 ${selectedBuyToken.symbol}`;
     if (sellUsdEl) sellUsdEl.textContent = "$0.00";
@@ -560,10 +572,9 @@ async function fetchBalances() {
 }
 
 // ============================================================
-// QUOTE + SWAP
+// QUOTE
 // ============================================================
 async function refreshQuote() {
-  if (!signer || !selectedSellToken || !selectedBuyToken) return;
   const sellAmount = document.getElementById("sellAmount")?.value;
   const buyAmountEl = document.getElementById("buyAmount");
   const sellUsdEl = document.getElementById("sellUsd");
@@ -578,6 +589,7 @@ async function refreshQuote() {
     currentQuote = null;
     return;
   }
+  if (!signer || !selectedSellToken?.address || !selectedBuyToken?.address) return;
 
   const user = await signer.getAddress();
   const amountWei = ethers.utils.parseUnits(sellAmount, selectedSellToken.decimals || 18).toString();
@@ -633,7 +645,7 @@ async function refreshQuote() {
       } catch (_) { gasEl.textContent = "-"; }
     }
   } catch (e) {
-    console.warn("[quote] failed:", e);
+    console.warn("[quote] failed:", e.message);
     buyAmountEl.value = "";
     currentQuote = null;
   }
@@ -643,11 +655,8 @@ async function executeSwap() {
   if (!signer) { openWalletModal(); return; }
   if (!currentQuote) { alert("No quote yet. Enter an amount first."); return; }
   const quote = currentQuote;
-  const user = await signer.getAddress();
-
   try {
-    const sellAddr = selectedSellToken.address.toLowerCase();
-    const isNative = sellAddr === WRAPPED_NATIVE.toLowerCase();
+    const isNative = selectedSellToken.address.toLowerCase() === WRAPPED_NATIVE.toLowerCase();
     if (!isNative && quote.issues?.allowance) {
       const erc20 = new ethers.Contract(selectedSellToken.address, ERC20_ABI, signer);
       const t = await erc20.approve(quote.allowanceTarget, ethers.constants.MaxUint256);
@@ -669,7 +678,7 @@ async function executeSwap() {
 }
 
 async function handlePercentClick(pct) {
-  if (!signer || !selectedSellToken) return;
+  if (!signer || !selectedSellToken?.address) return;
   const user = await signer.getAddress();
   const isNative = selectedSellToken.address.toLowerCase() === WRAPPED_NATIVE.toLowerCase();
   let amount;
@@ -755,7 +764,7 @@ async function handleScan() {
   const card = document.getElementById("resultCard");
   if (!input || !card) return;
   const addr = input.value.trim();
-  if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) { alert("Enter a valid Ethereum address."); return; }
+  if (!isValidAddress(addr)) { alert("Enter a valid Ethereum address."); return; }
   card.innerHTML = `<div class="result-card"><div class="rc-empty"><div class="spinner"></div><p class="rc-sub" style="margin-top:12px">Scanning…</p></div></div>`;
   try {
     const data = await lookup(addr);
@@ -787,125 +796,6 @@ async function openFonbnk() {
 }
 
 // ============================================================
-// GLOBAL CLICK DELEGATION — bound ONCE to document
-// Never breaks when SPA swaps innerHTML
-// ============================================================
-document.addEventListener("click", async (e) => {
-  try {
-  const t = e.target;
-
-  // --- SPA nav links ---
-  const navLink = t.closest(".nav-links a");
-  if (navLink) {
-    const href = navLink.getAttribute("href");
-    if (href && !href.startsWith("#") && !href.startsWith("mailto:")) {
-      e.preventDefault();
-      navigateTo(href.startsWith("/") ? href : "/" + href);
-      return;
-    }
-  }
-
-  // --- Brand logo ---
-  const brand = t.closest("a.brand");
-  if (brand) {
-    e.preventDefault();
-    navigateTo("/");
-    return;
-  }
-
-  // --- Connect wallet — always opens the wallet modal ---
-  if (t.closest("#connectBtn")) {
-    openWalletModal();
-    return;
-  }
-  if (t.closest("#walletClose") || t.closest("#walletBackdrop")) { closeWalletModal(); return; }
-
-  // --- Tabs ---
-  const tab = t.closest(".tab");
-  if (tab && tab.dataset.tab) {
-    document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
-    document.querySelectorAll(".tab-panel").forEach(x => x.classList.remove("active"));
-    tab.classList.add("active");
-    const panel = document.querySelector(`.tab-panel[data-panel="${tab.dataset.tab}"]`);
-    if (panel) panel.classList.add("active");
-    return;
-  }
-
-  // --- Chain selector ---
-  const chainBtn = t.closest(".chain-btn");
-  if (chainBtn) {
-    document.querySelectorAll(".chain-btn").forEach(x => x.classList.remove("active"));
-    chainBtn.classList.add("active");
-    const newChain = parseInt(chainBtn.dataset.chain);
-    if (signer) {
-      try {
-        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x" + newChain.toString(16) }] });
-        currentChainId = newChain;
-      } catch (err) { if (err.code === 4902) alert("Add network to wallet."); return; }
-    } else currentChainId = newChain;
-    loadTokenList(currentChainId);
-    fetchBalances();
-    return;
-  }
-
-  // --- Token pickers ---
-  if (t.closest("#sellTokenBtn")) { openTokenPicker("sell"); return; }
-  if (t.closest("#buyTokenBtn")) { openTokenPicker("buy"); return; }
-  if (t.closest("#tokenPickerClose") || t.closest("#tokenPickerBackdrop")) { closeTokenPicker(); return; }
-
-  // --- Percent buttons ---
-  const pctBtn = t.closest(".percent-buttons button");
-  if (pctBtn) { handlePercentClick(parseInt(pctBtn.dataset.percent)); return; }
-
-  // --- Swap ---
-  if (t.closest("#swapBtn")) { executeSwap(); return; }
-
-  // --- Scan / Claim ---
-  if (t.closest("#checkBtn")) { handleScan(); return; }
-
-  // --- Fiat ---
-  if (t.closest("#moonpayBtn")) { openMoonPay(); return; }
-  if (t.closest("#transakBtn")) { openTransak(); return; }
-  if (t.closest("#fonbnkBtn")) { openFonbnk(); return; }
-
-  // --- Complaint ---
-  if (t.closest("#complaintBtn")) {
-    const subject = document.getElementById("complaintSubject")?.value.trim() || "BlushDrops Support";
-    const body = document.getElementById("complaintBody")?.value.trim();
-    if (!body) { alert("Describe the issue."); return; }
-    window.location.href = `mailto:owenlandia450@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    return;
-  }
-  } catch (err) {
-    console.error("[click] handler error:", err);
-  }
-}, true);
-
-// --- Input delegation ---
-document.addEventListener("input", (e) => {
-  if (e.target.id === "sellAmount") {
-    clearTimeout(quoteTimer);
-    quoteTimer = setTimeout(refreshQuote, 500);
-  }
-  if (e.target.id === "tokenSearch") {
-    handleTokenSearchInput(e);
-  }
-  if (e.target.id === "orderSearchInput") {
-    if (typeof loadOrderHistory === "function") loadOrderHistory(e.target.value);
-  }
-});
-
-// --- Enter key ---
-document.addEventListener("keypress", (e) => {
-  if (e.key === "Enter" && e.target.id === "addressInput") handleScan();
-});
-
-// --- Escape key ---
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { closeWalletModal(); closeTokenPicker(); }
-});
-
-// ============================================================
 // SPA ROUTER
 // ============================================================
 const INTERNAL_ROUTES = ["/", "/index.html", "/profile.html", "/community.html", "/support.html", "/profile", "/community", "/support"];
@@ -917,7 +807,8 @@ function isInternalRoute(url) {
 function updateNavActive(url) {
   document.querySelectorAll(".nav-links a").forEach(link => {
     const href = (link.getAttribute("href") || "").replace(/^https?:\/\/[^/]+/, "");
-    const isActive = href && url.includes(href.replace(/\.html$/, "").replace(/^\//, "").replace(/\/$/, ""));
+    const clean = href.replace(/\.html$/, "").replace(/^\//, "").replace(/\/$/, "");
+    const isActive = clean && (url === "/" + clean || url.endsWith("/" + clean) || url.includes(clean));
     link.classList.toggle("active", !!isActive);
   });
 }
@@ -956,29 +847,13 @@ async function navigateTo(url, push = true) {
 }
 
 function onPageChanged(url) {
-  console.log("[spa] page changed →", url);
-
-  // 1. Re-apply wallet UI (in case nav is inside swapped content)
   updateWalletUI();
-
-  // 2. Re-apply token UI (buttons reset to defaults after swap)
   updateTokenUI();
 
-  // 3. If wallet is connected, refresh balances + quote
-  if (signer) {
-    // Small delay to make sure DOM is fully in place
-    setTimeout(() => {
-      if (document.getElementById("sellBalance")) {
-        fetchBalances();
-      }
-      const amt = document.getElementById("sellAmount")?.value;
-      if (amt && parseFloat(amt) > 0 && document.getElementById("buyAmount")) {
-        refreshQuote();
-      }
-    }, 100);
-  }
+  // Re-apply chain active state
+  document.querySelectorAll(".chain-btn").forEach(b => b.classList.toggle("active", +b.dataset.chain === currentChainId));
 
-  // 4. Count-up animations on stats
+  // Count-up animations
   document.querySelectorAll("[data-count]").forEach(el => {
     if (el.dataset.animated) return;
     el.dataset.animated = "1";
@@ -994,27 +869,178 @@ function onPageChanged(url) {
     tick();
   });
 
-  // 5. Profile page: load order history
-  if (url.includes("profile")) {
-    if (typeof loadOrderHistory === "function") {
-      setTimeout(() => loadOrderHistory(), 100);
-    }
+  // Restore balances + quote after nav if wallet connected
+  if (signer) {
+    setTimeout(() => {
+      if (document.getElementById("sellBalance")) fetchBalances();
+      const amt = document.getElementById("sellAmount")?.value;
+      if (amt && parseFloat(amt) > 0 && document.getElementById("buyAmount")) refreshQuote();
+    }, 150);
+  }
+
+  // Profile page — load order history
+  if (url.includes("profile") && typeof loadOrderHistory === "function") {
+    setTimeout(() => loadOrderHistory(), 100);
   }
 }
+
+// ============================================================
+// GLOBAL EVENT DELEGATION (single listener — never breaks)
+// ============================================================
+document.addEventListener("click", async (e) => {
+  const t = e.target;
+  if (!t) return;
+
+  // --- SPA nav links ---
+  const navLink = t.closest(".nav-links a");
+  if (navLink) {
+    const href = navLink.getAttribute("href");
+    if (href && !href.startsWith("#") && !href.startsWith("mailto:")) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      await navigateTo(href.startsWith("/") ? href : "/" + href);
+      return;
+    }
+  }
+
+  // --- Brand logo ---
+  const brand = t.closest("a.brand");
+  if (brand) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    await navigateTo("/");
+    return;
+  }
+
+  // --- Connect wallet button ---
+  if (t.closest("#connectBtn")) {
+    e.preventDefault();
+    openWalletModal();
+    return;
+  }
+
+  // --- Wallet modal close ---
+  if (t.closest("#walletClose") || t.closest("#walletBackdrop")) {
+    e.preventDefault();
+    closeWalletModal();
+    return;
+  }
+
+  // --- Token picker close ---
+  if (t.closest("#tokenPickerClose") || t.closest("#tokenPickerBackdrop")) {
+    e.preventDefault();
+    closeTokenPicker();
+    return;
+  }
+
+  // --- Token picker item ---
+  const tokenItem = t.closest(".token-list-item");
+  if (tokenItem && tokenItem.dataset.tokenIndex != null) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const idx = parseInt(tokenItem.dataset.tokenIndex);
+    if (visibleTokens[idx]) selectToken(visibleTokens[idx]);
+    return;
+  }
+
+  // --- Token open buttons ---
+  if (t.closest("#sellTokenBtn")) { e.preventDefault(); openTokenPicker("sell"); return; }
+  if (t.closest("#buyTokenBtn")) { e.preventDefault(); openTokenPicker("buy"); return; }
+
+  // --- Tabs ---
+  const tab = t.closest(".tab");
+  if (tab && tab.dataset.tab) {
+    e.preventDefault();
+    document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+    document.querySelectorAll(".tab-panel").forEach(x => x.classList.remove("active"));
+    tab.classList.add("active");
+    const panel = document.querySelector(`.tab-panel[data-panel="${tab.dataset.tab}"]`);
+    if (panel) panel.classList.add("active");
+    return;
+  }
+
+  // --- Chain selector ---
+  const chainBtn = t.closest(".chain-btn");
+  if (chainBtn) {
+    e.preventDefault();
+    document.querySelectorAll(".chain-btn").forEach(x => x.classList.remove("active"));
+    chainBtn.classList.add("active");
+    const newChain = parseInt(chainBtn.dataset.chain);
+    if (signer) {
+      try {
+        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x" + newChain.toString(16) }] });
+        currentChainId = newChain;
+      } catch (err) { if (err.code === 4902) alert("Add network to wallet."); return; }
+    } else currentChainId = newChain;
+    allTokens = []; // force reload for new chain
+    await loadTokenList(currentChainId);
+    fetchBalances();
+    return;
+  }
+
+  // --- Percent buttons ---
+  const pctBtn = t.closest(".percent-buttons button");
+  if (pctBtn) { e.preventDefault(); handlePercentClick(parseInt(pctBtn.dataset.percent)); return; }
+
+  // --- Swap ---
+  if (t.closest("#swapBtn")) { e.preventDefault(); executeSwap(); return; }
+
+  // --- Scan / Claim ---
+  if (t.closest("#checkBtn")) { e.preventDefault(); handleScan(); return; }
+
+  // --- Fiat ---
+  if (t.closest("#moonpayBtn")) { e.preventDefault(); openMoonPay(); return; }
+  if (t.closest("#transakBtn")) { e.preventDefault(); openTransak(); return; }
+  if (t.closest("#fonbnkBtn")) { e.preventDefault(); openFonbnk(); return; }
+
+  // --- Complaint ---
+  if (t.closest("#complaintBtn")) {
+    e.preventDefault();
+    const subject = document.getElementById("complaintSubject")?.value.trim() || "BlushDrops Support";
+    const body = document.getElementById("complaintBody")?.value.trim();
+    if (!body) { alert("Describe the issue."); return; }
+    window.location.href = `mailto:owenlandia450@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    return;
+  }
+}, true);
+
+document.addEventListener("input", (e) => {
+  if (e.target.id === "sellAmount") {
+    clearTimeout(quoteTimer);
+    quoteTimer = setTimeout(refreshQuote, 500);
+  }
+  if (e.target.id === "tokenSearch") {
+    handleTokenSearch(e.target.value);
+  }
+  if (e.target.id === "orderSearchInput") {
+    if (typeof loadOrderHistory === "function") loadOrderHistory(e.target.value);
+  }
+});
+
+document.addEventListener("keypress", (e) => {
+  if (e.key === "Enter" && e.target.id === "addressInput") handleScan();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { closeWalletModal(); closeTokenPicker(); }
+});
 
 window.addEventListener("popstate", () => navigateTo(window.location.pathname + window.location.search, false));
 
 // ============================================================
 // INIT
 // ============================================================
-function init() {
+async function init() {
   updateWalletUI();
-  startReconnectLoop();
   updateNavActive(window.location.pathname);
-  // Load tokens for swap tab
-  if (document.getElementById("sellAmount") || document.getElementById("sellTokenBtn")) {
-    loadTokenList(currentChainId);
+
+  // Load tokens if on swap page
+  if (document.getElementById("sellTokenBtn")) {
+    await loadTokenList(currentChainId);
   }
+
+  // Try wallet reconnect
+  startReconnectLoop();
 }
 
 if (document.readyState === "loading") {
