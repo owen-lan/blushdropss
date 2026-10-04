@@ -32,7 +32,14 @@ const CHAINS = {
   10:    { name: "Optimism", cgPlatform: "optimistic-ethereum", native: { symbol: "ETH",   logo: "https://assets.coingecko.com/coins/images/279/small/ethereum.png" } },
   56:    { name: "BNB",      cgPlatform: "binance-smart-chain", native: { symbol: "BNB",   logo: "https://assets.coingecko.com/coins/images/825/small/bnb-icon2_2x.png" } },
 };
-
+const TOKEN_LIST_URLS = {
+  1:     ["https://tokens.coingecko.com/ethereum/all.json", "https://gateway.ipfs.io/ipns/tokens.uniswap.org"],
+  137:   ["https://tokens.coingecko.com/polygon-pos/all.json", "https://unpkg.com/quickswap-default-token-list@latest/build/quickswap-default.tokenlist.json"],
+  8453:  ["https://tokens.coingecko.com/base/all.json"],
+  42161: ["https://tokens.coingecko.com/arbitrum-one/all.json"],
+  10:    ["https://tokens.coingecko.com/optimistic-ethereum/all.json"],
+  56:    ["https://tokens.coingecko.com/binance-smart-chain/all.json", "https://tokens.pancakeswap.finance/pancakeswap-extended.json"],
+};
 // ---------- STATE ----------
 let provider = null, signer = null, currentUser = null, readProvider = null;
 let currentChainId = 1;
@@ -67,40 +74,108 @@ function isValidAddress(a) { return typeof a === "string" && /^0x[a-fA-F0-9]{40}
   });
 })();
 
-// ---------- BASE TOKENS ----------
 function getBaseTokens(chainId) {
   const bases = {
     1: [
-      { symbol:"ETH",  name:"Ethereum",        address:WRAPPED_NATIVE, logo:"https://assets.coingecko.com/coins/images/279/small/ethereum.png", decimals:18 },
-      { symbol:"UNI",  name:"Uniswap",         address:"0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", logo:"https://assets.coingecko.com/coins/images/12504/small/uniswap-uni.png", decimals:18 },
-      { symbol:"USDC", name:"USD Coin",        address:"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", logo:"https://assets.coingecko.com/coins/images/6319/small/usdc.png", decimals:6 },
-      { symbol:"USDT", name:"Tether",          address:"0xdAC17F958D2ee523a2206206994597C13D831ec7", logo:"https://assets.coingecko.com/coins/images/325/small/Tether.png", decimals:6 },
-      { symbol:"DAI",  name:"Dai",             address:"0x6B175474E89094C44Da98b954EedeAC495271d0F", logo:"https://assets.coingecko.com/coins/images/9956/small/Badge_Dai.png", decimals:18 },
-      { symbol:"WBTC", name:"Wrapped Bitcoin", address:"0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", logo:"https://assets.coingecko.com/coins/images/7598/small/wrapped_bitcoin_wbtc.png", decimals:8 },
+      { symbol:"ETH",   name:"Ethereum",        address:WRAPPED_NATIVE, logo:"https://assets.coingecko.com/coins/images/279/small/ethereum.png", decimals:18 },
+      { symbol:"WETH",  name:"Wrapped Ether",   address:"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", logo:"https://assets.coingecko.com/coins/images/2518/small/weth.png", decimals:18 },
+      { symbol:"USDC",  name:"USD Coin",        address:"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", logo:"https://assets.coingecko.com/coins/images/6319/small/usdc.png", decimals:6 },
+      { symbol:"USDT",  name:"Tether",          address:"0xdAC17F958D2ee523a2206206994597C13D831ec7", logo:"https://assets.coingecko.com/coins/images/325/small/Tether.png", decimals:6 },
+      { symbol:"DAI",   name:"Dai",             address:"0x6B175474E89094C44Da98b954EedeAC495271d0F", logo:"https://assets.coingecko.com/coins/images/9956/small/Badge_Dai.png", decimals:18 },
+      { symbol:"WBTC",  name:"Wrapped Bitcoin", address:"0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", logo:"https://assets.coingecko.com/coins/images/7598/small/wrapped_bitcoin_wbtc.png", decimals:8 },
+      { symbol:"UNI",   name:"Uniswap",         address:"0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", logo:"https://assets.coingecko.com/coins/images/12504/small/uniswap-uni.png", decimals:18 },
+      { symbol:"LINK",  name:"Chainlink",       address:"0x514910771AF9Ca656af840dff83E8264EcF986CA", logo:"https://assets.coingecko.com/coins/images/877/small/chainlink-new-logo.png", decimals:18 },
+      { symbol:"AAVE",  name:"Aave",            address:"0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9", logo:"https://assets.coingecko.com/coins/images/12645/small/AAVE.png", decimals:18 },
+      { symbol:"MATIC", name:"Polygon",         address:"0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0", logo:"https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png", decimals:18 },
+      { symbol:"SHIB",  name:"Shiba Inu",       address:"0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE", logo:"https://assets.coingecko.com/coins/images/11939/small/shiba.png", decimals:18 },
+      { symbol:"PEPE",  name:"Pepe",            address:"0x6982508145454Ce325dDbE47a25d4ec3d2311933", logo:"https://assets.coingecko.com/coins/images/29850/small/pepe-token.jpeg", decimals:18 },
+      { symbol:"MKR",   name:"Maker",           address:"0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2", logo:"https://assets.coingecko.com/coins/images/1364/small/Mark_Maker.png", decimals:18 },
+      { symbol:"CRV",   name:"Curve DAO",       address:"0xD533a949740bb3306d119CC777fa900bA034cd52", logo:"https://assets.coingecko.com/coins/images/12124/small/Curve.png", decimals:18 },
+      { symbol:"LDO",   name:"Lido DAO",        address:"0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32", logo:"https://assets.coingecko.com/coins/images/13573/small/Lido_DAO.png", decimals:18 },
+      { symbol:"ENS",   name:"Ethereum Name Service", address:"0xC18360217D8F7Ab5e7c516566761Ea12Ce7F9D72", logo:"https://assets.coingecko.com/coins/images/19785/small/acatxTm8_400x400.jpg", decimals:18 },
+      { symbol:"COMP",  name:"Compound",        address:"0xc00e94Cb662C3520282E6f5717214004A7f26888", logo:"https://assets.coingecko.com/coins/images/10775/small/COMP.png", decimals:18 },
+      { symbol:"SNX",   name:"Synthetix",       address:"0xC011a73ee8576Fb46F5E1c5751cA3B9Fe0af2a6F", logo:"https://assets.coingecko.com/coins/images/3406/small/SNX.png", decimals:18 },
+      { symbol:"GRT",   name:"The Graph",       address:"0xc944E90C64B2c07662A292be6244BDf05Cda44a7", logo:"https://assets.coingecko.com/coins/images/13397/small/Graph_Token.png", decimals:18 },
+      { symbol:"1INCH", name:"1inch",           address:"0x111111111117dC0aa78b770fA6A738034120C302", logo:"https://assets.coingecko.com/coins/images/13469/small/1inch-token.png", decimals:18 },
+      { symbol:"SUSHI", name:"SushiSwap",       address:"0x6B3595068778DD592e39A122f4f5a5cF09C90fE2", logo:"https://assets.coingecko.com/coins/images/12271/small/512x512_Logo_no_chop.png", decimals:18 },
+      { symbol:"YFI",   name:"yearn.finance",   address:"0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e", logo:"https://assets.coingecko.com/coins/images/11849/small/yfi-192x192.png", decimals:18 },
+      { symbol:"BAT",   name:"Basic Attention", address:"0x0D8775F648430679A709E98d2b0Cb6250d2887EF", logo:"https://assets.coingecko.com/coins/images/677/small/basic-attention-token.png", decimals:18 },
     ],
     137: [
-      { symbol:"MATIC", name:"Polygon",  address:WRAPPED_NATIVE, logo:"https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png", decimals:18 },
-      { symbol:"USDC",  name:"USD Coin", address:"0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", logo:"https://assets.coingecko.com/coins/images/6319/small/usdc.png", decimals:6 },
-      { symbol:"USDT",  name:"Tether",   address:"0xc2132D05D31c914a87C6611C10748AEb04B58e8F", logo:"https://assets.coingecko.com/coins/images/325/small/Tether.png", decimals:6 },
+      { symbol:"MATIC", name:"Polygon",       address:WRAPPED_NATIVE, logo:"https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png", decimals:18 },
+      { symbol:"WMATIC",name:"Wrapped MATIC", address:"0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270", logo:"https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png", decimals:18 },
+      { symbol:"WETH",  name:"Wrapped Ether", address:"0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619", logo:"https://assets.coingecko.com/coins/images/2518/small/weth.png", decimals:18 },
+      { symbol:"USDC",  name:"USD Coin",      address:"0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", logo:"https://assets.coingecko.com/coins/images/6319/small/usdc.png", decimals:6 },
+      { symbol:"USDT",  name:"Tether",        address:"0xc2132D05D31c914a87C6611C10748AEb04B58e8F", logo:"https://assets.coingecko.com/coins/images/325/small/Tether.png", decimals:6 },
+      { symbol:"DAI",   name:"Dai",           address:"0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063", logo:"https://assets.coingecko.com/coins/images/9956/small/Badge_Dai.png", decimals:18 },
+      { symbol:"WBTC",  name:"Wrapped Bitcoin", address:"0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6", logo:"https://assets.coingecko.com/coins/images/7598/small/wrapped_bitcoin_wbtc.png", decimals:8 },
+      { symbol:"LINK",  name:"Chainlink",     address:"0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39", logo:"https://assets.coingecko.com/coins/images/877/small/chainlink-new-logo.png", decimals:18 },
+      { symbol:"AAVE",  name:"Aave",          address:"0xD6DF932A45C0f255f85145f286eA0b292B21C90B", logo:"https://assets.coingecko.com/coins/images/12645/small/AAVE.png", decimals:18 },
+      { symbol:"CRV",   name:"Curve DAO",     address:"0x172370d5Cd63279eFa6d502DAB29171933a610AF", logo:"https://assets.coingecko.com/coins/images/12124/small/Curve.png", decimals:18 },
+      { symbol:"SUSHI", name:"SushiSwap",     address:"0x0b3F868E0BE5597D5DB7fEB59E1CADBb0fdDa50a", logo:"https://assets.coingecko.com/coins/images/12271/small/512x512_Logo_no_chop.png", decimals:18 },
+      { symbol:"GHST",  name:"Aavegotchi",    address:"0x385Eeac5cB85A38A9a07A70c73e0a3271CfB54A7", logo:"https://assets.coingecko.com/coins/images/12467/small/GHST.png", decimals:18 },
+      { symbol:"QUICK", name:"QuickSwap",     address:"0xB5C064F955D8e7F38fE0460C556a72987494eE17", logo:"https://assets.coingecko.com/coins/images/13970/small/quick.png", decimals:18 },
+      { symbol:"BAL",   name:"Balancer",      address:"0x9a71012B13CA4d3D0Cdc72A177DF3ef03b0E76A3", logo:"https://assets.coingecko.com/coins/images/11683/small/Balancer.png", decimals:18 },
+      { symbol:"SNX",   name:"Synthetix",     address:"0x50B728D8D964fd00C2d0AAD81718b71311feF68a", logo:"https://assets.coingecko.com/coins/images/3406/small/SNX.png", decimals:18 },
     ],
     8453: [
-      { symbol:"ETH",  name:"Ethereum",  address:WRAPPED_NATIVE, logo:"https://assets.coingecko.com/coins/images/279/small/ethereum.png", decimals:18 },
-      { symbol:"USDC", name:"USD Coin",  address:"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", logo:"https://assets.coingecko.com/coins/images/6319/small/usdc.png", decimals:6 },
+      { symbol:"ETH",   name:"Ethereum",       address:WRAPPED_NATIVE, logo:"https://assets.coingecko.com/coins/images/279/small/ethereum.png", decimals:18 },
+      { symbol:"WETH",  name:"Wrapped Ether",  address:"0x4200000000000000000000000000000000000006", logo:"https://assets.coingecko.com/coins/images/2518/small/weth.png", decimals:18 },
+      { symbol:"USDC",  name:"USD Coin",       address:"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", logo:"https://assets.coingecko.com/coins/images/6319/small/usdc.png", decimals:6 },
+      { symbol:"USDbC", name:"USD Base Coin",  address:"0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA", logo:"https://assets.coingecko.com/coins/images/6319/small/usdc.png", decimals:6 },
+      { symbol:"DAI",   name:"Dai",            address:"0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb", logo:"https://assets.coingecko.com/coins/images/9956/small/Badge_Dai.png", decimals:18 },
+      { symbol:"cbETH", name:"Coinbase ETH",   address:"0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22", logo:"https://assets.coingecko.com/coins/images/27008/small/cbeth.png", decimals:18 },
+      { symbol:"AERO",  name:"Aerodrome",      address:"0x940181a94A35A4569E4529A3CDfB74e38FD98631", logo:"https://assets.coingecko.com/coins/images/31745/small/token.png", decimals:18 },
+      { symbol:"DEGEN", name:"Degen",          address:"0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed", logo:"https://assets.coingecko.com/coins/images/34515/small/android-chrome-512x512.png", decimals:18 },
+      { symbol:"TOSHI", name:"Toshi",          address:"0xAC1Bd2486aAf3B5C0fc3Fd868558b082a531B2B4", logo:"https://assets.coingecko.com/coins/images/31126/small/Toshi_Logo_-_Transparent.png", decimals:18 },
+      { symbol:"BRETT", name:"Brett",          address:"0x532f27101965dd16442E59d40670FaF5eBB142E4", logo:"https://assets.coingecko.com/coins/images/35529/small/1000050750.png", decimals:18 },
     ],
     42161: [
-      { symbol:"ETH",  name:"Ethereum",  address:WRAPPED_NATIVE, logo:"https://assets.coingecko.com/coins/images/279/small/ethereum.png", decimals:18 },
-      { symbol:"ARB",  name:"Arbitrum",  address:"0x912CE59144191C1204E64559FE8253a0e49E6548", logo:"https://assets.coingecko.com/coins/images/16547/small/photo_2023-03-29_21.47.00.jpeg", decimals:18 },
-      { symbol:"USDC", name:"USD Coin",  address:"0xaf88d065e77c8cC2239327C5EDb3A432268e5831", logo:"https://assets.coingecko.com/coins/images/6319/small/usdc.png", decimals:6 },
+      { symbol:"ETH",   name:"Ethereum",       address:WRAPPED_NATIVE, logo:"https://assets.coingecko.com/coins/images/279/small/ethereum.png", decimals:18 },
+      { symbol:"WETH",  name:"Wrapped Ether",  address:"0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", logo:"https://assets.coingecko.com/coins/images/2518/small/weth.png", decimals:18 },
+      { symbol:"USDC",  name:"USD Coin",       address:"0xaf88d065e77c8cC2239327C5EDb3A432268e5831", logo:"https://assets.coingecko.com/coins/images/6319/small/usdc.png", decimals:6 },
+      { symbol:"USDC.e",name:"Bridged USDC",   address:"0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8", logo:"https://assets.coingecko.com/coins/images/6319/small/usdc.png", decimals:6 },
+      { symbol:"USDT",  name:"Tether",         address:"0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", logo:"https://assets.coingecko.com/coins/images/325/small/Tether.png", decimals:6 },
+      { symbol:"DAI",   name:"Dai",            address:"0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1", logo:"https://assets.coingecko.com/coins/images/9956/small/Badge_Dai.png", decimals:18 },
+      { symbol:"ARB",   name:"Arbitrum",       address:"0x912CE59144191C1204E64559FE8253a0e49E6548", logo:"https://assets.coingecko.com/coins/images/16547/small/photo_2023-03-29_21.47.00.jpeg", decimals:18 },
+      { symbol:"WBTC",  name:"Wrapped Bitcoin", address:"0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f", logo:"https://assets.coingecko.com/coins/images/7598/small/wrapped_bitcoin_wbtc.png", decimals:8 },
+      { symbol:"LINK",  name:"Chainlink",      address:"0xf97f4df75117a78c1A5a0DBb814Af92458539FB4", logo:"https://assets.coingecko.com/coins/images/877/small/chainlink-new-logo.png", decimals:18 },
+      { symbol:"GMX",   name:"GMX",            address:"0xfc5A1A6EB076a2C7aD06eD22C90d7E710E35ad0a", logo:"https://assets.coingecko.com/coins/images/18323/small/arbit.png", decimals:18 },
+      { symbol:"MAGIC", name:"Magic",          address:"0x539bdE0d7Dbd336b79148AA742883198BBF60342", logo:"https://assets.coingecko.com/coins/images/18623/small/magic.png", decimals:18 },
+      { symbol:"RDNT",  name:"Radiant Capital", address:"0x3082CC23568eA640225c2467653dB90e9250AaA0", logo:"https://assets.coingecko.com/coins/images/26536/small/Radiant-Logo-200x200.png", decimals:18 },
+      { symbol:"GRAIL", name:"Camelot",        address:"0x3d9907F9a368ad0a51Be60f7Da3b97cf940982D8", logo:"https://assets.coingecko.com/coins/images/27244/small/GRAIL.png", decimals:18 },
+      { symbol:"PENDLE",name:"Pendle",         address:"0x0c880f6761F1af8d9Aa9C466984b80DAb9a8c9e8", logo:"https://assets.coingecko.com/coins/images/15069/small/Pendle_Logo_Normal-03.png", decimals:18 },
     ],
     10: [
-      { symbol:"ETH",  name:"Ethereum",  address:WRAPPED_NATIVE, logo:"https://assets.coingecko.com/coins/images/279/small/ethereum.png", decimals:18 },
-      { symbol:"OP",   name:"Optimism",  address:"0x4200000000000000000000000000000000000042", logo:"https://assets.coingecko.com/coins/images/25244/small/Optimism.png", decimals:18 },
-      { symbol:"USDC", name:"USD Coin",  address:"0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85", logo:"https://assets.coingecko.com/coins/images/6319/small/usdc.png", decimals:6 },
+      { symbol:"ETH",   name:"Ethereum",       address:WRAPPED_NATIVE, logo:"https://assets.coingecko.com/coins/images/279/small/ethereum.png", decimals:18 },
+      { symbol:"WETH",  name:"Wrapped Ether",  address:"0x4200000000000000000000000000000000000006", logo:"https://assets.coingecko.com/coins/images/2518/small/weth.png", decimals:18 },
+      { symbol:"USDC",  name:"USD Coin",       address:"0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85", logo:"https://assets.coingecko.com/coins/images/6319/small/usdc.png", decimals:6 },
+      { symbol:"USDC.e",name:"Bridged USDC",   address:"0x7F5c764cBc14f9669B88837ca1490cCa17c31607", logo:"https://assets.coingecko.com/coins/images/6319/small/usdc.png", decimals:6 },
+      { symbol:"USDT",  name:"Tether",         address:"0x94b008aA00579c1307B0EF2c499aD98a8ce58e58", logo:"https://assets.coingecko.com/coins/images/325/small/Tether.png", decimals:6 },
+      { symbol:"DAI",   name:"Dai",            address:"0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1", logo:"https://assets.coingecko.com/coins/images/9956/small/Badge_Dai.png", decimals:18 },
+      { symbol:"OP",    name:"Optimism",       address:"0x4200000000000000000000000000000000000042", logo:"https://assets.coingecko.com/coins/images/25244/small/Optimism.png", decimals:18 },
+      { symbol:"WBTC",  name:"Wrapped Bitcoin", address:"0x68f180fcCe6836688e9084f035309E29Bf0A2095", logo:"https://assets.coingecko.com/coins/images/7598/small/wrapped_bitcoin_wbtc.png", decimals:8 },
+      { symbol:"LINK",  name:"Chainlink",      address:"0x350a791Bfc2C21F9Ed5d10980Dad2e2638ffa7f6", logo:"https://assets.coingecko.com/coins/images/877/small/chainlink-new-logo.png", decimals:18 },
+      { symbol:"SNX",   name:"Synthetix",      address:"0x8700dAec35aF8Ff88c16BdF0418774CB3D7599B4", logo:"https://assets.coingecko.com/coins/images/3406/small/SNX.png", decimals:18 },
+      { symbol:"AAVE",  name:"Aave",           address:"0x76FB31fb4af56892A25e32cFC43De717950c9278", logo:"https://assets.coingecko.com/coins/images/12645/small/AAVE.png", decimals:18 },
+      { symbol:"PERP",  name:"Perpetual",      address:"0x9e1028F5F1D5eDE59748FFceE5532509976840E0", logo:"https://assets.coingecko.com/coins/images/12381/small/60d18e06844a844ad75901a9_mark_only_03.png", decimals:18 },
     ],
     56: [
-      { symbol:"BNB",  name:"BNB",      address:WRAPPED_NATIVE, logo:"https://assets.coingecko.com/coins/images/825/small/bnb-icon2_2x.png", decimals:18 },
-      { symbol:"USDT", name:"Tether",   address:"0x55d398326f99059fF775485246999027B3197955", logo:"https://assets.coingecko.com/coins/images/325/small/Tether.png", decimals:18 },
-      { symbol:"USDC", name:"USD Coin", address:"0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", logo:"https://assets.coingecko.com/coins/images/6319/small/usdc.png", decimals:18 },
+      { symbol:"BNB",   name:"BNB",            address:WRAPPED_NATIVE, logo:"https://assets.coingecko.com/coins/images/825/small/bnb-icon2_2x.png", decimals:18 },
+      { symbol:"WBNB",  name:"Wrapped BNB",    address:"0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", logo:"https://assets.coingecko.com/coins/images/12591/small/binance-coin-logo.png", decimals:18 },
+      { symbol:"USDT",  name:"Tether",         address:"0x55d398326f99059fF775485246999027B3197955", logo:"https://assets.coingecko.com/coins/images/325/small/Tether.png", decimals:18 },
+      { symbol:"USDC",  name:"USD Coin",       address:"0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", logo:"https://assets.coingecko.com/coins/images/6319/small/usdc.png", decimals:18 },
+      { symbol:"BUSD",  name:"Binance USD",    address:"0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56", logo:"https://assets.coingecko.com/coins/images/9576/small/BUSD.png", decimals:18 },
+      { symbol:"DAI",   name:"Dai",            address:"0x1AF3F329e8BE154074D8769D1FFa4eE058B1DBc3", logo:"https://assets.coingecko.com/coins/images/9956/small/Badge_Dai.png", decimals:18 },
+      { symbol:"BTCB",  name:"Bitcoin BEP2",   address:"0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c", logo:"https://assets.coingecko.com/coins/images/14108/small/Binance-bitcoin.png", decimals:18 },
+      { symbol:"ETH",   name:"Ethereum",       address:"0x2170Ed0880ac9A755fd29B2688956BD959F933F8", logo:"https://assets.coingecko.com/coins/images/279/small/ethereum.png", decimals:18 },
+      { symbol:"CAKE",  name:"PancakeSwap",    address:"0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82", logo:"https://assets.coingecko.com/coins/images/12632/small/pancakeswap-cake-logo_%281%29.png", decimals:18 },
+      { symbol:"XRP",   name:"XRP",            address:"0x1D2F0da169ceB9fC7B3144628dB156f3F6c60dBE", logo:"https://assets.coingecko.com/coins/images/44/small/xrp-symbol-white-128.png", decimals:18 },
+      { symbol:"ADA",   name:"Cardano",        address:"0x3EE2200Efb3400fAbB9AacF31297cBdD1d435D47", logo:"https://assets.coingecko.com/coins/images/975/small/cardano.png", decimals:18 },
+      { symbol:"DOGE",  name:"Dogecoin",       address:"0xbA2aE424d960c26247Dd6c32edC70B295c744C43", logo:"https://assets.coingecko.com/coins/images/5/small/dogecoin.png", decimals:8 },
+      { symbol:"SHIB",  name:"Shiba Inu",      address:"0x2859e4544C4bB03966803b044A93563Bd2D0DD4D", logo:"https://assets.coingecko.com/coins/images/11939/small/shiba.png", decimals:18 },
+      { symbol:"MATIC", name:"Polygon",        address:"0xCC42724C6683B7E57334c4E856f4c9965ED682bD", logo:"https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png", decimals:18 },
+      { symbol:"LINK",  name:"Chainlink",      address:"0xF8A0BF9cF54Bb92F17374d9e9A321E6a111a51bD", logo:"https://assets.coingecko.com/coins/images/877/small/chainlink-new-logo.png", decimals:18 },
     ],
   };
   return bases[chainId] || bases[1];
@@ -238,30 +313,61 @@ function legacyDetect() {
 }
 setTimeout(legacyDetect, 300);
 
-// ---------- TOKEN LIST ----------
 async function loadTokenList(chainId) {
   if (allTokens.length > 50 && allTokens[0]?.chainId === chainId && selectedSellToken?.address && selectedBuyToken?.address) return;
+
   const base = getBaseTokens(chainId);
   allTokens = base.map(t => ({ ...t, chainId }));
   selectedSellToken = { ...base[0], chainId };
   selectedBuyToken = { ...(base[1] || base[0]), chainId };
   updateTokenUI();
-  const platform = CHAINS[chainId]?.cgPlatform;
-  if (!platform) return;
-  try {
-    const headers = {};
-    if (CONFIG.COINGECKO_API_KEY && !CONFIG.COINGECKO_API_KEY.includes("YOUR")) headers["x-cg-demo-api-key"] = CONFIG.COINGECKO_API_KEY;
-    const res = await fetch(`https://tokens.coingecko.com/${platform}/all.json`, { headers });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const data = await res.json();
-    const seen = new Set(base.map(t => t.address.toLowerCase()));
-    (data.tokens || []).forEach(t => {
-      if (!t.address || !t.symbol) return;
-      const a = t.address.toLowerCase(); if (seen.has(a)) return; seen.add(a);
-      allTokens.push({ symbol: t.symbol, name: t.name || t.symbol, address: t.address, logo: t.logoURI || "", decimals: t.decimals ?? 18, chainId });
+  console.log(`[tokens] base set for chain ${chainId}: ${allTokens.length} tokens`);
+
+  const urls = TOKEN_LIST_URLS[chainId] || [];
+  if (!urls.length) return;
+
+  const headers = {};
+  if (CONFIG.COINGECKO_API_KEY && !CONFIG.COINGECKO_API_KEY.includes("YOUR")) headers["x-cg-demo-api-key"] = CONFIG.COINGECKO_API_KEY;
+
+  let data = null;
+  for (const url of urls) {
+    try {
+      console.log(`[tokens] trying ${url}`);
+      const res = await fetch(url, { headers });
+      if (!res.ok) { console.warn(`[tokens] ${url} → HTTP ${res.status}`); continue; }
+      data = await res.json();
+      if (data && Array.isArray(data.tokens) && data.tokens.length) {
+        console.log(`[tokens] ✅ loaded ${data.tokens.length} from ${url}`);
+        break;
+      } else {
+        console.warn(`[tokens] ${url} → empty or wrong shape`, Object.keys(data || {}));
+        data = null;
+      }
+    } catch (e) {
+      console.warn(`[tokens] ${url} → ${e.message}`);
+    }
+  }
+
+  if (!data) { console.warn(`[tokens] all sources failed for chain ${chainId}`); return; }
+
+  const seen = new Set(base.map(t => t.address.toLowerCase()));
+  let added = 0;
+  for (const t of data.tokens) {
+    if (!t.address || !t.symbol) continue;
+    const a = t.address.toLowerCase();
+    if (seen.has(a)) continue;
+    seen.add(a);
+    allTokens.push({
+      symbol: t.symbol,
+      name: t.name || t.symbol,
+      address: t.address,
+      logo: t.logoURI || t.logo || "",
+      decimals: t.decimals != null ? t.decimals : 18,
+      chainId,
     });
-    console.log(`[tokens] ${allTokens.length} for chain ${chainId}`);
-  } catch (e) { console.warn("[tokens] extended failed:", e.message); }
+    added++;
+  }
+  console.log(`[tokens] chain ${chainId}: ${added} added → ${allTokens.length} total`);
 }
 
 function updateTokenUI() {
