@@ -490,11 +490,14 @@ async function handlePercentClick(pct) {
     let balWei, decimals = selectedSellToken.decimals ?? 18;
     if (isNative) { balWei = await getReadProvider().getBalance(user); decimals = 18; }
     else { const c = new ethers.Contract(selectedSellToken.address, ERC20_ABI, getReadProvider()); balWei = await c.balanceOf(user); }
+
+    // Keep a small buffer of gas for native Max
     if (isNative && pct >= 100) {
-      const reserve = ethers.utils.parseEther("0.001");
+      const reserve = ethers.utils.parseEther("0.0003");
       if (balWei.gt(reserve)) balWei = balWei.sub(reserve);
     }
-    const pctWei = balWei.mul(Math.floor(pct * 100)).div(100);
+
+    const pctWei = balWei.mul(pct).div(100);
     const amount = ethers.utils.formatUnits(pctWei, decimals);
     const input = document.getElementById("sellAmount");
     if (input) input.value = amount;
