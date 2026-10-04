@@ -42,6 +42,7 @@ const TOKEN_LIST_URLS = {
 };
 // ---------- STATE ----------
 let provider = null, signer = null, currentUser = null, readProvider = null;
+let activeProvider = null;
 let currentChainId = 1;
 let allTokens = [], selectedSellToken = null, selectedBuyToken = null;
 let pickerTarget = null, currentQuote = null;
@@ -231,6 +232,7 @@ async function connectWithProvider(providerObj, rdns) {
   if (!providerObj || typeof ethers === "undefined") return;
   try {
     provider = new ethers.providers.Web3Provider(providerObj);
+    activeProvider = providerObj;
     await provider.send("eth_requestAccounts", []);
     signer = provider.getSigner();
     currentUser = await signer.getAddress();
@@ -267,6 +269,7 @@ async function autoReconnect() {
     const accounts = await chosen.request({ method: "eth_accounts" });
     if (!accounts?.length) return false;
     provider = new ethers.providers.Web3Provider(chosen);
+    activeProvider = chosen;
     signer = provider.getSigner();
     currentUser = accounts[0];
     updateWalletUI();
@@ -855,12 +858,47 @@ document.addEventListener("click", async (e) => {
     document.querySelectorAll(".chain-btn").forEach(x => x.classList.remove("active"));
     chainBtn.classList.add("active");
     const nc = parseInt(chainBtn.dataset.chain);
-    if (signer) {
-      try { await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x" + nc.toString(16) }] }); currentChainId = nc; }
-      catch (err) { if (err.code === 4902) alert("Add network to wallet."); return; }
-    } else currentChainId = nc;
+
+    currentChainId = nc;
+
+    // Use the ACTUAL connected wallet provider (not window.ethereum)
+    const wp = activeProvider || window.ethereum;
+
+    if (signer && wp) {
+      try {
+        await wp.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: "0x" + nc.toString(16) }],
+        });
+      } catch (err) {
+        if (err.code === 4902) {
+          const chainParams = {
+            137:   { chainId: "0x89",   chainName: "Polygon",      nativeCurrency: { name: "MATIC", symbol: "MATIC", decimals: 18 }, rpcUrls: ["https://polygon-rpc.com"],          blockExplorerUrls: ["https://polygonscan.com"] },
+            8453:  { chainId: "0x2105", chainName: "Base",         nativeCurrency: { name: "ETH",   symbol: "ETH",   decimals: 18 }, rpcUrls: ["https://mainnet.base.org"],        blockExplorerUrls: ["https://basescan.org"] },
+            42161: { chainId: "0xa4b1", chainName: "Arbitrum One", nativeCurrency: { name: "ETH",   symbol: "ETH",   decimals: 18 }, rpcUrls: ["https://arb1.arbitrum.io/rpc"],   blockExplorerUrls: ["https://arbiscan.io"] },
+            10:    { chainId: "0xa",    chainName: "OP Mainnet",   nativeCurrency: { name: "ETH",   symbol: "ETH",   decimals: 18 }, rpcUrls: ["https://mainnet.optimism.io"],    blockExplorerUrls: ["https://optimistic.etherscan.io"] },
+            56:    { chainId: "0x38",   chainName: "BNB Chain",    nativeCurrency: { name: "BNB",   symbol: "BNB",   decimals: 18 }, rpcUrls: ["https://bsc-dataseed.binance.org"], blockExplorerUrls: ["https://bscscan.com"] },
+          };
+          if (chainParams[nc]) {
+            try {
+              await wp.request({
+                method: "wallet_addEthereumChain",
+                params: [chainParams[nc]],
+              });
+            } catch (addErr) {
+              console.warn("[chain] add network failed:", addErr.message);
+            }
+          }
+        } else if (err.code !== 4001) {
+          console.warn("[chain] switch failed:", err.message);
+        }
+      }
+    }
+
+    // Always reload tokens for the new chain, regardless of wallet state
     allTokens = [];
-    await loadTokenList(currentChainId);
+    await loadTokenList(nc);
+    console.log(`[chain] switched to ${nc}, tokens loaded: ${allTokens.length}`);
     fetchBalances();
     return;
   }
