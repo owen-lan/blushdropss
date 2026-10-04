@@ -6,17 +6,28 @@ const PROFILE_CONFIG = {
 };
 
 let profileUser = null;
+let profileLoaded = false;
 
 window.addEventListener("walletConnected", (e) => {
   profileUser = e.detail.address;
   loadOrderHistory();
 });
 
-// Also handle case where wallet was already connected before profile.js loaded
-if (typeof currentUser !== "undefined" && currentUser) {
-  profileUser = currentUser;
-  loadOrderHistory();
-}
+// If the wallet was already connected before profile.js loaded
+window.addEventListener("load", () => {
+  setTimeout(() => {
+    if (typeof currentUser !== "undefined" && currentUser) {
+      profileUser = currentUser;
+      loadOrderHistory();
+    } else {
+      // Show connect prompt
+      const listEl = document.getElementById("orderHistoryList");
+      if (listEl) {
+        listEl.innerHTML = `<div class="rc-empty"><span class="rc-emoji">🔌</span><h3 class="rc-title">Connect your wallet</h3><p class="rc-sub">Connect a wallet to see your order history.</p></div>`;
+      }
+    }
+  }, 800);
+});
 
 async function loadOrderHistory(searchQuery = "") {
   const listEl = document.getElementById("orderHistoryList");
@@ -31,9 +42,8 @@ async function loadOrderHistory(searchQuery = "") {
 
   listEl.innerHTML = `<div class="rc-empty"><div class="spinner"></div><p class="rc-sub">Loading order history…</p></div>`;
 
-  // Timeout protection
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  const timeoutId = setTimeout(() => controller.abort(), 12000);
 
   try {
     const params = new URLSearchParams({
@@ -49,13 +59,14 @@ async function loadOrderHistory(searchQuery = "") {
     clearTimeout(timeoutId);
 
     if (res.status === 401 || res.status === 403) {
-      listEl.innerHTML = `<div class="rc-empty"><span class="rc-emoji">🔑</span><h3 class="rc-title">API key needed</h3><p class="rc-sub">Add your 0x API key to see trade history.</p></div>`;
+      listEl.innerHTML = `<div class="rc-empty"><span class="rc-emoji">🔑</span><h3 class="rc-title">API key needed</h3><p class="rc-sub">Set your 0x API key in profile.js to see trade history.</p></div>`;
+      if (summaryEl) summaryEl.innerHTML = "";
       return;
     }
 
     if (!res.ok) {
       const errText = await res.text();
-      throw new Error(`HTTP ${res.status}`);
+      throw new Error(`HTTP ${res.status} — ${errText.slice(0, 100)}`);
     }
 
     const data = await res.json();
@@ -71,7 +82,11 @@ async function loadOrderHistory(searchQuery = "") {
 
     if (trades.length === 0) {
       listEl.innerHTML = `<div class="rc-empty"><span class="rc-emoji">📭</span><h3 class="rc-title">No trades yet</h3><p class="rc-sub">Your swap history will appear here after your first trade.</p></div>`;
-      if (summaryEl) summaryEl.innerHTML = "";
+      if (summaryEl) summaryEl.innerHTML = `
+        <div class="summary-card"><div class="label">Total trades</div><div class="value">0</div></div>
+        <div class="summary-card"><div class="label">Chain</div><div class="value">Ethereum</div></div>
+        <div class="summary-card"><div class="label">Last trade</div><div class="value">—</div></div>
+      `;
       return;
     }
 
@@ -112,10 +127,13 @@ async function loadOrderHistory(searchQuery = "") {
   } catch (e) {
     clearTimeout(timeoutId);
     const isTimeout = e.name === "AbortError";
-    listEl.innerHTML = `<div class="rc-empty"><span class="rc-emoji">${isTimeout ? "⏱️" : "⚠️"}</span><h3 class="rc-title">${isTimeout ? "Request timed out" : "Couldn't load history"}</h3><p class="rc-sub">${isTimeout ? "The 0x API took too long to respond. Try again later." : e.message}</p></div>`;
+    listEl.innerHTML = `<div class="rc-empty"><span class="rc-emoji">${isTimeout ? "⏱️" : "⚠️"}</span><h3 class="rc-title">${isTimeout ? "Request timed out" : "Couldn't load history"}</h3><p class="rc-sub">${isTimeout ? "The 0x API took too long. Try again later." : e.message}</p></div>`;
   }
 }
-const searchInput = document.getElementById("orderSearchInput");
-if (searchInput) {
-  searchInput.addEventListener("input", (e) => loadOrderHistory(e.target.value));
-}
+
+// Search input
+document.addEventListener("input", (e) => {
+  if (e.target.id === "orderSearchInput") {
+    loadOrderHistory(e.target.value);
+  }
+});

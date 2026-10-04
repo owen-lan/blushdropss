@@ -499,9 +499,6 @@ async function fetchPrices(chainId, tokenAddresses) {
   return priceCache;
 }
 
-// ============================================================
-// BALANCES
-// ============================================================
 async function fetchBalances() {
   const sellBalEl = document.getElementById("sellBalance");
   const buyBalEl = document.getElementById("buyBalance");
@@ -509,17 +506,28 @@ async function fetchBalances() {
   const buyUsdEl = document.getElementById("buyUsd");
   if (!sellBalEl || !buyBalEl) return;
 
-  // Guarantee tokens exist and have addresses
-  if (!selectedSellToken?.address || !selectedBuyToken?.address) {
-    console.log("[balance] skipped — tokens not ready");
+  // Snapshot state immediately — prevents race conditions during await
+  const sellToken = selectedSellToken ? Object.assign({}, selectedSellToken) : null;
+  const buyToken  = selectedBuyToken  ? Object.assign({}, selectedBuyToken)  : null;
+  const currentSigner = signer;
+
+  // Hard guards — nothing runs without valid data
+  if (!sellToken || !buyToken || !sellToken.address || !buyToken.address || !currentSigner) {
+    console.log("[balance] skipped — not ready", {
+      sell: sellToken?.symbol, sellAddr: sellToken?.address,
+      buy: buyToken?.symbol,  buyAddr: buyToken?.address,
+      hasSigner: !!currentSigner
+    });
+    sellBalEl.textContent = sellToken?.symbol ? `0 ${sellToken.symbol}` : "0";
+    buyBalEl.textContent  = buyToken?.symbol  ? `0 ${buyToken.symbol}`  : "0";
+    if (sellUsdEl) sellUsdEl.textContent = "$0.00";
+    if (buyUsdEl)  buyUsdEl.textContent  = "$0.00";
     return;
   }
 
-  if (!signer) {
-    sellBalEl.textContent = `0 ${selectedSellToken.symbol}`;
-    buyBalEl.textContent = `0 ${selectedBuyToken.symbol}`;
-    if (sellUsdEl) sellUsdEl.textContent = "$0.00";
-    if (buyUsdEl) buyUsdEl.textContent = "$0.00";
+  // Validate addresses are proper hex
+  if (!isValidAddress(sellToken.address) || !isValidAddress(buyToken.address)) {
+    console.log("[balance] invalid token address", sellToken.address, buyToken.address);
     return;
   }
 
@@ -527,14 +535,14 @@ async function fetchBalances() {
   buyBalEl.textContent = "loading…";
 
   try {
-    const user = await signer.getAddress();
+    const user = await currentSigner.getAddress();
     if (!isValidAddress(user)) { console.log("[balance] invalid user"); return; }
 
     const mc = new ethers.Contract(MULTICALL_ADDRESS, MULTICALL_ABI, getReadProvider());
     const iface = new ethers.utils.Interface(ERC20_ABI);
     const NATIVE = WRAPPED_NATIVE.toLowerCase();
-    const sellAddr = selectedSellToken.address;
-    const buyAddr = selectedBuyToken.address;
+    const sellAddr = sellToken.address;
+    const buyAddr = buyToken.address;
     const isSellNative = sellAddr.toLowerCase() === NATIVE;
     const isBuyNative = buyAddr.toLowerCase() === NATIVE;
 
@@ -550,11 +558,11 @@ async function fetchBalances() {
     const results = await mc.callStatic.aggregate3(calls);
 
     let sellBal = "0", buyBal = "0";
-    if (results[0].success) sellBal = ethers.utils.formatUnits(ethers.BigNumber.from(results[0].returnData), selectedSellToken.decimals || 18);
-    if (results[1].success) buyBal = ethers.utils.formatUnits(ethers.BigNumber.from(results[1].returnData), selectedBuyToken.decimals || 18);
+    if (results[0].success) sellBal = ethers.utils.formatUnits(ethers.BigNumber.from(results[0].returnData), sellToken.decimals || 18);
+    if (results[1].success) buyBal = ethers.utils.formatUnits(ethers.BigNumber.from(results[1].returnData), buyToken.decimals || 18);
 
-    sellBalEl.textContent = `${parseFloat(sellBal).toFixed(6)} ${selectedSellToken.symbol}`;
-    buyBalEl.textContent = `${parseFloat(buyBal).toFixed(6)} ${selectedBuyToken.symbol}`;
+    sellBalEl.textContent = `${parseFloat(sellBal).toFixed(6)} ${sellToken.symbol}`;
+    buyBalEl.textContent = `${parseFloat(buyBal).toFixed(6)} ${buyToken.symbol}`;
 
     fetchPrices(currentChainId, [sellAddr, buyAddr]).then(prices => {
       const sp = prices[sellAddr.toLowerCase()] || 0;
@@ -564,8 +572,8 @@ async function fetchBalances() {
     }).catch(() => {});
   } catch (e) {
     console.warn("[balance] failed:", e.message);
-    sellBalEl.textContent = `0 ${selectedSellToken.symbol}`;
-    buyBalEl.textContent = `0 ${selectedBuyToken.symbol}`;
+    sellBalEl.textContent = `0 ${sellToken.symbol}`;
+    buyBalEl.textContent = `0 ${buyToken.symbol}`;
     if (sellUsdEl) sellUsdEl.textContent = "$0.00";
     if (buyUsdEl) buyUsdEl.textContent = "$0.00";
   }
