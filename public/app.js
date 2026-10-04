@@ -150,6 +150,34 @@ function openWalletModal() {
   if (!modal) return;
   modal.classList.remove("hidden");
   document.body.style.overflow = "hidden";
+
+  // If connected, show a disconnect banner at the top of the list
+  const listEl = document.getElementById("walletList");
+  if (listEl && currentUser) {
+    listEl.innerHTML = `
+      <div style="padding: 16px; border-radius: 14px; background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.3); margin-bottom: 12px;">
+        <div style="font-size: 12px; color: rgba(244,241,255,0.55); margin-bottom: 4px;">CONNECTED</div>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 14px; word-break: break-all;">${currentUser}</div>
+        <button id="disconnectBtn" style="margin-top: 12px; padding: 8px 16px; border-radius: 10px; background: rgba(248,113,113,0.15); border: 1px solid rgba(248,113,113,0.35); color: #fca5a5; font-size: 13px; cursor: pointer;">
+          Disconnect
+        </button>
+      </div>
+    `;
+    const dBtn = document.getElementById("disconnectBtn");
+    if (dBtn) {
+      dBtn.addEventListener("click", () => {
+        currentUser = null;
+        signer = null;
+        provider = null;
+        try { localStorage.removeItem(WALLET_STORAGE_KEY); } catch (_) {}
+        updateWalletUI();
+        closeWalletModal();
+        window.dispatchEvent(new CustomEvent("walletDisconnected"));
+      });
+    }
+    return;
+  }
+
   refreshWalletList();
 }
 function closeWalletModal() {
@@ -464,7 +492,12 @@ async function fetchPrices(chainId, tokenAddresses) {
 // BALANCES
 // ============================================================
 async function fetchBalances() {
-  if (!selectedSellToken || !selectedBuyToken) return;
+  // Reject if tokens aren't ready
+  if (!selectedSellToken?.address || !selectedBuyToken?.address) {
+    console.log("[balance] skipped — tokens not ready");
+    return;
+  }
+
   const sellBalEl = document.getElementById("sellBalance");
   const buyBalEl = document.getElementById("buyBalance");
   const sellUsdEl = document.getElementById("sellUsd");
@@ -780,13 +813,9 @@ document.addEventListener("click", async (e) => {
     return;
   }
 
-  // --- Connect wallet ---
+  // --- Connect wallet — always opens the wallet modal ---
   if (t.closest("#connectBtn")) {
-    if (currentUser) {
-      navigator.clipboard?.writeText(currentUser);
-      const txt = document.getElementById("connectText");
-      if (txt) { const o = txt.textContent; txt.textContent = "Copied!"; setTimeout(() => txt.textContent = o, 1200); }
-    } else openWalletModal();
+    openWalletModal();
     return;
   }
   if (t.closest("#walletClose") || t.closest("#walletBackdrop")) { closeWalletModal(); return; }
