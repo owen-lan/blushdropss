@@ -1,6 +1,45 @@
 // ============================================================
 // BLUSHDROPS — app.js (final)
 // ============================================================
+// ============================================================
+// LEDGER COUNTERS — self-contained, runs no matter what
+// ============================================================
+(function setupCounters() {
+  function applyCounters() {
+    const els = document.querySelectorAll("[data-count]");
+    if (els.length === 0) return;
+    console.log(`[counter] applying to ${els.length} element(s)`);
+    els.forEach((el, i) => {
+      const target = +el.dataset.count || 0;
+      const prefix = el.dataset.prefix !== undefined ? el.dataset.prefix : "$";
+      const text = prefix + target.toLocaleString();
+      if (el.textContent !== text) {
+        el.textContent = text;
+        console.log(`[counter] el ${i} → "${text}"`);
+      }
+    });
+  }
+
+  // Run on load
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", applyCounters);
+  } else {
+    applyCounters();
+  }
+
+  // Retry every 200ms for the first 10 seconds (handles any timing issue)
+  let ticks = 0;
+  const interval = setInterval(() => {
+    applyCounters();
+    if (++ticks > 50) clearInterval(interval);
+  }, 200);
+
+  // Watch for DOM changes (SPA navigation swaps content)
+  const observer = new MutationObserver(() => applyCounters());
+  window.addEventListener("load", () => {
+    observer.observe(document.body, { childList: true, subtree: true });
+  });
+})();
 
 const CONFIG = {
   SPLITTER_ADDRESS: "0x0000000000000000000000000000000000000000",
