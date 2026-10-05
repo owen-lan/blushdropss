@@ -1008,10 +1008,28 @@ function onPageChanged(url) {
   document.querySelectorAll(".chain-btn").forEach(b => b.classList.toggle("active", +b.dataset.chain === currentChainId));
 
   document.querySelectorAll("[data-count]").forEach(el => {
-    if (el.dataset.animated) return; el.dataset.animated = "1";
-    const t = +el.dataset.count; let c = 0; const s = t / 60;
-    const tick = () => { c += s; if (c >= t) c = t; el.textContent = "$" + Math.floor(c).toLocaleString(); if (c < t) requestAnimationFrame(tick); };
-    tick();
+    if (el.dataset.animated === "1") return;
+    el.dataset.animated = "1";
+
+    const target = +el.dataset.count;
+    const prefix = el.dataset.prefix !== undefined ? el.dataset.prefix : "$";
+
+    // Safety: always set final value after 1.2s no matter what
+    const finalText = prefix + target.toLocaleString();
+    setTimeout(() => { el.textContent = finalText; }, 1200);
+
+    // Animate
+    const start = performance.now();
+    const duration = 900;
+    const step = (now) => {
+      const p = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - p, 3);
+      const val = Math.floor(target * eased);
+      el.textContent = prefix + val.toLocaleString();
+      if (p < 1) requestAnimationFrame(step);
+      else el.textContent = finalText;
+    };
+    requestAnimationFrame(step);
   });
 
   if (signer) {
@@ -1171,9 +1189,36 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeWal
 
 // ---------- INIT ----------
 async function init() {
-  updateWalletUI(); updateNavActive(window.location.pathname);
-  if (document.getElementById("sellTokenBtn")) await loadTokenList(currentChainId);
+  updateWalletUI();
+  updateNavActive(window.location.pathname);
+
+  // Load real stats from backend
+  loadRealStats();
+
+  if (document.getElementById("sellTokenBtn")) {
+    await loadTokenList(currentChainId);
+  }
+
   startReconnectLoop();
 }
-if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
-else init();
+
+// ---- Fetch real stats from backend ----
+async function loadRealStats() {
+  try {
+    const res = await fetch("/api/health");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+
+    console.log("[stats] backend:", data);
+
+    if (data.addresses && data.addresses > 0) {
+      const walletsEl = document.querySelector('[data-prefix=""]') || document.querySelectorAll(".ledger-value")[1];
+      if (walletsEl) {
+        walletsEl.dataset.count = data.addresses;
+        walletsEl.dataset.animated = "0"; // re-trigger animation
+      }
+    }
+  } catch (e) {
+    console.warn("[stats] backend fetch failed:", e.message);
+  }
+}
