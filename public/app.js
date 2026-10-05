@@ -4,7 +4,15 @@
 
 const CONFIG = {
   SPLITTER_ADDRESS: "0x0000000000000000000000000000000000000000",
-  RPC_URLS: ["https://eth-mainnet.g.alchemy.com/v2/AkH_F7btslPyNlLzxXJth"],
+  RPC_URLS: {
+    1:     "https://eth-mainnet.g.alchemy.com/v2/AkH_F7btslPyNlLzxXJth",
+    137:   "https://polygon-mainnet.infura.io/v3/e6c913f06dbd4bdfafc295e9bceaf8b2",
+    8453:  "https://base-mainnet.infura.io/v3/e6c913f06dbd4bdfafc295e9bceaf8b2",
+    42161: "https://arbitrum-mainnet.infura.io/v3/e6c913f06dbd4bdfafc295e9bceaf8b2",
+    10:    "https://optimism-mainnet.infura.io/v3/e6c913f06dbd4bdfafc295e9bceaf8b2",
+    56:    "https://bnb-mainnet.g.alchemy.com/v2/-zEYYA_DbG4COJ3zwoJjR",
+    
+  },
   UNI_DISTRIBUTOR: "0x090D4613473dEE047c3f2706764f49E0821D256e",
   ZEROX_API_KEY: "8fc750e2-ebc9-4211-b32e-a035fcab239c",
   SWAP_FEE_RECIPIENT: "0xB1204D46fbc488a6606a00ce610e9Cad61483231",
@@ -58,9 +66,11 @@ function colorForName(name) {
   return c[Math.abs(h) % c.length];
 }
 function getReadProvider() {
-  if (readProvider) return readProvider;
-  const ps = CONFIG.RPC_URLS.map((url, i) => ({ provider: new ethers.providers.JsonRpcProvider(url), priority: i + 1, stallTimeout: 2500, weight: 1 }));
-  readProvider = new ethers.providers.FallbackProvider(ps, 1);
+  const url = CONFIG.RPC_URLS[currentChainId] || CONFIG.RPC_URLS[1];
+  if (!readProvider || readProvider._chainId !== currentChainId) {
+    readProvider = new ethers.providers.JsonRpcProvider(url);
+    readProvider._chainId = currentChainId;
+  }
   return readProvider;
 }
 function isValidAddress(a) { return typeof a === "string" && /^0x[a-fA-F0-9]{40}$/.test(a); }
@@ -473,13 +483,18 @@ async function fetchBalances() {
     const NATIVE = WRAPPED_NATIVE.toLowerCase();
 
     const readBal = async (token) => {
-      if (token.address.toLowerCase() === NATIVE) {
-        const b = await rp.getBalance(user);
-        return ethers.utils.formatUnits(b, 18);
+      try {
+        if (token.address.toLowerCase() === NATIVE) {
+          const b = await rp.getBalance(user);
+          return ethers.utils.formatUnits(b, 18);
+        }
+        const c = new ethers.Contract(token.address, ERC20_ABI, rp);
+        const b = await c.balanceOf(user);
+        return ethers.utils.formatUnits(b, token.decimals ?? 18);
+      } catch (e) {
+        console.warn(`[balance] ${token.symbol} read failed on chain ${currentChainId}:`, e.message);
+        return "0";
       }
-      const c = new ethers.Contract(token.address, ERC20_ABI, rp);
-      const b = await c.balanceOf(user);
-      return ethers.utils.formatUnits(b, token.decimals ?? 18);
     };
 
     const [sellBal, buyBal] = await Promise.all([readBal(sellToken), readBal(buyToken)]);
@@ -860,6 +875,9 @@ document.addEventListener("click", async (e) => {
     const nc = parseInt(chainBtn.dataset.chain);
 
     currentChainId = nc;
+    readProvider = null;
+    priceCache = {};
+    priceCacheTime = 0;
 
     // Use the ACTUAL connected wallet provider (not window.ethereum)
     const wp = activeProvider || window.ethereum;
