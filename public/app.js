@@ -592,17 +592,58 @@ async function executeSwap() {
   if (!signer) { openWalletModal(); return; }
   if (!currentQuote) { alert("No quote yet."); return; }
   const q = currentQuote;
+
   try {
     const isNative = selectedSellToken.address.toLowerCase() === WRAPPED_NATIVE.toLowerCase();
+
+    // 1. Handle approval if needed
     if (!isNative && q.issues?.allowance) {
       const c = new ethers.Contract(selectedSellToken.address, ERC20_ABI, signer);
       const t = await c.approve(q.allowanceTarget, ethers.constants.MaxUint256);
       await t.wait();
     }
-    const tx = await signer.sendTransaction({ to: q.transaction.to, data: q.transaction.data, value: q.transaction.value, gasLimit: q.transaction.gas });
+
+    // 2. Get current network gas price and add a buffer
+    const feeData = await getReadProvider().getFeeData();
+    let gasPrice;
+    if (feeData.gasPrice) {
+      // Add 20% buffer, minimum 1.5 gwei on mainnet
+      const min = currentChainId === 1 ? ethers.utils.parseUnits("1.5", "gwei") : ethers.utils.parseUnits("0.1", "gwei");
+      gasPrice = feeData.gasPrice.mul(120).div(100);
+      if (gasPrice.lt(min)) gasPrice = min;
+    } else {
+      // EIP-1559 chain
+      const maxFee = feeData.maxFeePerGas ? feeData.maxFeePerGas.mul(120).div(100) : ethers.utils.parseUnits("30", "gwei");
+      const maxPriority = feeData.maxPriorityFeePerGas ? feeData.maxPriorityFeePerGas.mul(120).div(100) : ethers.utils.parseUnits("1.5", "gwei");
+      gasPrice = null;
+    }
+
+    console.log("[swap] network gasPrice:", gasPrice ? ethers.utils.formatUnits(gasPrice, "gwei") + " gwei" : "EIP-1559");
+
+    // 3. Build the transaction with our own gas price
+    const txRequest = {
+      to: q.transaction.to,
+      data: q.transaction.data,
+      value: q.transaction.value || "0x0",
+      gasLimit: q.transaction.gas ? ethers.BigNumber.from(q.transaction.gas) : ethers.BigNumber.from(300000),
+    };
+    if (gasPrice) txRequest.gasPrice = gasPrice;
+    if (feeData.maxFeePerGas) txRequest.maxFeePerGas = feeData.maxFeePerGas.mul(120).div(100);
+    if (feeData.maxPriorityFeePerGas) txRequest.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas.mul(120).div(100);
+
+    // 4. Send it
+    const tx = await signer.sendTransaction(txRequest);
+    console.log("[swap] tx sent:", tx.hash);
+    alert("Transaction sent: " + tx.hash.slice(0, 12) + "…");
     await tx.wait();
-    alert("✅ Swap complete!"); fetchBalances();
-  } catch (err) { console.error(err); alert("Swap failed: " + (err.reason || err.message)); }
+    alert("✅ Swap complete!");
+    fetchBalances();
+    refreshQuote();
+  } catch (err) {
+    console.error("[swap] failed:", err);
+    if (err.code === 4001) return;
+    alert("Swap failed: " + (err.reason || err.message || "unknown"));
+  }
 }
 
 async function handlePercentClick(pct) {
