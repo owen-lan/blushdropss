@@ -123,6 +123,46 @@ function isValidAddress(a) { return typeof a === "string" && /^0x[a-fA-F0-9]{40}
     d.style.left = e.clientX + "px"; d.style.top = e.clientY + "px";
   });
 })();
+// ============================================================
+// HANDLE CHAIN CHANGE WITHOUT RELOADING
+// ============================================================
+async function handleChainChange(newChain) {
+  if (currentChainId === newChain) return;
+
+  console.log("[chain] detected change →", newChain);
+
+  currentChainId = newChain;
+  readProvider = null;
+  priceCache = {};
+  priceCacheTime = 0;
+  currentQuote = null;
+
+  // Update chain selector active state
+  document.querySelectorAll(".chain-btn").forEach(b => {
+    b.classList.toggle("active", parseInt(b.dataset.chain) === newChain);
+  });
+
+  // Rebuild provider + signer (ethers caches the old network)
+  if (activeProvider) {
+    try {
+      provider = new ethers.providers.Web3Provider(activeProvider);
+      signer = provider.getSigner();
+      await provider.getNetwork();
+      console.log("[chain] provider rebuilt for", newChain);
+    } catch (e) {
+      console.warn("[chain] rebuild failed:", e.message);
+    }
+  }
+
+  // Reload tokens + balances for the new chain
+  allTokens = [];
+  await loadTokenList(newChain);
+  fetchBalances();
+
+  // Refresh quote if user already entered an amount
+  const amt = document.getElementById("sellAmount")?.value;
+  if (amt && parseFloat(amt) > 0) refreshQuote();
+}
 
 function getBaseTokens(chainId) {
   const bases = {
@@ -292,7 +332,10 @@ async function connectWithProvider(providerObj, rdns) {
       else currentUser = accts[0];
       updateWalletUI(); fetchBalances();
     });
-    providerObj.on?.("chainChanged", () => window.location.reload());
+    providerObj.on?.("chainChanged", (chainIdHex) => {
+      const newChain = parseInt(chainIdHex, 16);
+      handleChainChange(newChain);
+    });
     const net = await provider.getNetwork();
     currentChainId = net.chainId;
     document.querySelectorAll(".chain-btn").forEach(b => b.classList.toggle("active", +b.dataset.chain === currentChainId));
