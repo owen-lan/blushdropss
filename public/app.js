@@ -1007,31 +1007,8 @@ function onPageChanged(url) {
   updateWalletUI(); updateTokenUI();
   document.querySelectorAll(".chain-btn").forEach(b => b.classList.toggle("active", +b.dataset.chain === currentChainId));
 
-  document.querySelectorAll("[data-count]").forEach(el => {
-    if (el.dataset.animated === "1") return;
-    el.dataset.animated = "1";
-
-    const target = +el.dataset.count;
-    const prefix = el.dataset.prefix !== undefined ? el.dataset.prefix : "$";
-
-    // Safety: always set final value after 1.2s no matter what
-    const finalText = prefix + target.toLocaleString();
-    setTimeout(() => { el.textContent = finalText; }, 1200);
-
-    // Animate
-    const start = performance.now();
-    const duration = 900;
-    const step = (now) => {
-      const p = Math.min((now - start) / duration, 1);
-      const eased = 1 - Math.pow(1 - p, 3);
-      const val = Math.floor(target * eased);
-      el.textContent = prefix + val.toLocaleString();
-      if (p < 1) requestAnimationFrame(step);
-      else el.textContent = finalText;
-    };
-    requestAnimationFrame(step);
-  });
-
+  runCounters();
+  
   if (signer) {
     setTimeout(() => {
       if (document.getElementById("sellBalance")) fetchBalances();
@@ -1192,6 +1169,9 @@ async function init() {
   updateWalletUI();
   updateNavActive(window.location.pathname);
 
+  // Run counters immediately on first load
+  runCounters();
+
   // Load real stats from backend
   loadRealStats();
 
@@ -1202,20 +1182,53 @@ async function init() {
   startReconnectLoop();
 }
 
+// ---- Counter animation (runs on load AND after SPA nav) ----
+function runCounters() {
+  document.querySelectorAll("[data-count]").forEach(el => {
+    const target = +el.dataset.count || 0;
+    const prefix = el.dataset.prefix !== undefined ? el.dataset.prefix : "$";
+    const finalText = prefix + target.toLocaleString();
+
+    // If target is 0, just set it
+    if (target === 0) {
+      el.textContent = finalText;
+      return;
+    }
+
+    // Guaranteed fallback — always snap to final value after 1.5s
+    setTimeout(() => { el.textContent = finalText; }, 1500);
+
+    // Animate
+    const start = performance.now();
+    const duration = 900;
+    const step = (now) => {
+      const p = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = prefix + Math.floor(target * eased).toLocaleString();
+      if (p < 1) requestAnimationFrame(step);
+      else el.textContent = finalText;
+    };
+    requestAnimationFrame(step);
+  });
+}
+
 // ---- Fetch real stats from backend ----
 async function loadRealStats() {
   try {
     const res = await fetch("/api/health");
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
-
     console.log("[stats] backend:", data);
 
     if (data.addresses && data.addresses > 0) {
-      const walletsEl = document.querySelector('[data-prefix=""]') || document.querySelectorAll(".ledger-value")[1];
-      if (walletsEl) {
-        walletsEl.dataset.count = data.addresses;
-        walletsEl.dataset.animated = "0"; // re-trigger animation
+      // Find the "Wallets indexed" element (2nd ledger-value)
+      const els = document.querySelectorAll(".ledger-value");
+      if (els[1]) {
+        els[1].dataset.count = data.addresses;
+        els[1].dataset.prefix = "";
+        // Re-run counters with new value
+        els[1].textContent = "0";
+        runCounters();
       }
     }
   } catch (e) {
