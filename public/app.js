@@ -878,6 +878,7 @@ document.addEventListener("click", async (e) => {
     readProvider = null;
     priceCache = {};
     priceCacheTime = 0;
+    currentQuote = null;  
 
     // Use the ACTUAL connected wallet provider (not window.ethereum)
     const wp = activeProvider || window.ethereum;
@@ -911,6 +912,18 @@ document.addEventListener("click", async (e) => {
           console.warn("[chain] switch failed:", err.message);
         }
       }
+
+      // ---- Rebuild provider + signer for the new chain ----
+      // MetaMask changes network, but our ethers provider is still bound to the old one.
+      // Recreate it so signer.sendTransaction() uses the correct chain.
+      try {
+        provider = new ethers.providers.Web3Provider(wp);
+        signer = provider.getSigner();
+        await provider.getNetwork(); // force detection
+        console.log("[chain] provider rebuilt for chain", nc);
+      } catch (rebuildErr) {
+        console.warn("[chain] provider rebuild failed:", rebuildErr.message);
+      }
     }
 
     // Always reload tokens for the new chain, regardless of wallet state
@@ -920,7 +933,6 @@ document.addEventListener("click", async (e) => {
     fetchBalances();
     return;
   }
-
   const pctBtn = t.closest(".percent-buttons button");
   if (pctBtn) { e.preventDefault(); handlePercentClick(parseInt(pctBtn.dataset.percent)); return; }
 
