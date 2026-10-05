@@ -523,69 +523,209 @@ async function fetchBalances() {
 
 // ---------- QUOTE ----------
 async function refreshQuote() {
-  const sellAmount = document.getElementById("sellAmount")?.value;
+  const sellAmountEl = document.getElementById("sellAmount");
   const buyAmountEl = document.getElementById("buyAmount");
-  if (!buyAmountEl) return;
-  const sellUsdEl = document.getElementById("sellUsd"), buyUsdEl = document.getElementById("buyUsd");
+  const sellUsdEl = document.getElementById("sellUsd");
+  const buyUsdEl = document.getElementById("buyUsd");
+  const swapBtn = document.getElementById("swapBtn");
 
+  if (!buyAmountEl) return;
+
+  // Remove any existing gas warning
+  const oldWarn = document.getElementById("gasWarning");
+  if (oldWarn) oldWarn.remove();
+
+  const sellAmount = sellAmountEl?.value;
+
+  // ---- Empty / invalid input ----
   if (!sellAmount || isNaN(sellAmount) || Number(sellAmount) <= 0) {
     buyAmountEl.value = "";
     if (sellUsdEl) sellUsdEl.textContent = "$0.00";
     if (buyUsdEl) buyUsdEl.textContent = "$0.00";
-    ["quoteRate","quoteImpact","quoteGas","quoteMinReceived"].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = "-"; });
-    currentQuote = null; return;
+    ["quoteRate", "quoteImpact", "quoteGas", "quoteMinReceived"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = "-";
+    });
+    currentQuote = null;
+    return;
   }
+
   if (!signer || !selectedSellToken?.address || !selectedBuyToken?.address) return;
 
   const user = await signer.getAddress();
-  const amountWei = ethers.utils.parseUnits(sellAmount, selectedSellToken.decimals ?? 18).toString();
+  const sellDecimals = selectedSellToken.decimals ?? 18;
+  const buyDecimals = selectedBuyToken.decimals ?? 18;
+
+  let amountWei;
+  try {
+    amountWei = ethers.utils.parseUnits(sellAmount, sellDecimals).toString();
+  } catch (_) {
+    return;
+  }
 
   try {
+    // ---- 1. Fetch quote from 0x via proxy ----
     const params = new URLSearchParams({
       chainId: currentChainId.toString(),
       sellToken: selectedSellToken.address,
       buyToken: selectedBuyToken.address,
-      sellAmount: amountWei, taker: user,
+      sellAmount: amountWei,
+      taker: user,
       swapFeeRecipient: CONFIG.SWAP_FEE_RECIPIENT,
       swapFeeBps: CONFIG.SWAP_FEE_BPS.toString(),
     });
-    const res = await fetch(`/api/0x/quote?${params}`, { headers: { "x-api-key": CONFIG.ZEROX_API_KEY } });
-    if (!res.ok) throw new Error(await res.text());
+
+    const res = await fetch(`/api/0x/quote?${params}`, {
+      headers: { "x-api-key": CONFIG.ZEROX_API_KEY },
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Quote failed (${res.status}): ${errText.slice(0, 100)}`);
+    }
+
     const quote = await res.json();
     currentQuote = quote;
 
-    const bd = selectedBuyToken.decimals ?? 18;
-    const bf = ethers.utils.formatUnits(quote.buyAmount, bd);
-    buyAmountEl.value = bf;
+    // ---- 2. Show buy amount ----
+    const buyFormatted = ethers.utils.formatUnits(quote.buyAmount, buyDecimals);
+    buyAmountEl.value = buyFormatted;
 
-    const prices = await fetchPrices(currentChainId, [selectedSellToken.address, selectedBuyToken.address]);
+    // ---- 3. Fetch live prices ----
+    const prices = await fetchPrices(currentChainId, [
+      selectedSellToken.address,
+      selectedBuyToken.address,
+    ]);
     const sp = prices[selectedSellToken.address.toLowerCase()] || 0;
     const bp = prices[selectedBuyToken.address.toLowerCase()] || 0;
-    if (sellUsdEl) sellUsdEl.textContent = `$${(parseFloat(sellAmount) * sp).toFixed(2)}`;
-    if (buyUsdEl) buyUsdEl.textContent = `$${(parseFloat(bf) * bp).toFixed(2)}`;
 
+    if (sellUsdEl) {
+      sellUsdEl.textContent = sp
+        ? `$${(parseFloat(sellAmount) * sp).toFixed(2)}`
+        : "$0.00";
+    }
+    if (buyUsdEl) {
+      buyUsdEl.textContent = bp
+        ? `$${(parseFloat(buyFormatted) * bp).toFixed(2)}`
+        : "$0.00";
+    }
+
+    // ---- 4. Rate ----
     const rateEl = document.getElementById("quoteRate");
-    if (rateEl) rateEl.textContent = `1 ${selectedSellToken.symbol} = ${(parseFloat(bf) / parseFloat(sellAmount)).toFixed(6)} ${selectedBuyToken.symbol}`;
+    if (rateEl) {
+      const rate = parseFloat(buyFormatted) / parseFloat(sellAmount);
+      rateEl.textContent = `1 ${selectedSellToken.symbol} = ${rate.toFixed(6)} ${selectedBuyToken.symbol}`;
+    }
+
+    // ---- 5. Price impact ----
     const impEl = document.getElementById("quoteImpact");
     if (impEl) {
       const imp = parseFloat(quote.estimatedPriceImpact || 0);
       impEl.textContent = imp ? `${imp.toFixed(2)}%` : "0.00%";
       impEl.style.color = imp > 3 ? "var(--red)" : imp > 1 ? "#fbbf24" : "var(--green)";
     }
+
+    // ---- 6. Minimum received ----
     const minEl = document.getElementById("quoteMinReceived");
-    if (minEl) minEl.textContent = quote.minBuyAmount ? `${parseFloat(ethers.utils.formatUnits(quote.minBuyAmount, bd)).toFixed(6)} ${selectedBuyToken.symbol}` : "-";
-    const gasEl = document.getElementById("quoteGas");
-    if (gasEl) {
-      try {
-        const gp = await getReadProvider().getGasPrice();
-        const gu = quote.transaction?.gas || 200000;
-        const np = prices[WRAPPED_NATIVE.toLowerCase()] || 0;
-        const gn = parseFloat(ethers.utils.formatEther(gp.mul(gu)));
-        const sym = CHAINS[currentChainId]?.native?.symbol || "ETH";
-        gasEl.textContent = np ? `${gn.toFixed(6)} ${sym} ($${(gn * np).toFixed(2)})` : `${gn.toFixed(6)} ${sym}`;
-      } catch (_) { gasEl.textContent = "-"; }
+    if (minEl) {
+      minEl.textContent = quote.minBuyAmount
+        ? `${parseFloat(ethers.utils.formatUnits(quote.minBuyAmount, buyDecimals)).toFixed(6)} ${selectedBuyToken.symbol}`
+        : "-";
     }
-  } catch (e) { console.warn("[quote] failed:", e.message); buyAmountEl.value = ""; currentQuote = null; }
+
+    // ---- 7. Network fee + gas pre-flight check ----
+    const gasEl = document.getElementById("quoteGas");
+    const nativeSymbol = CHAINS[currentChainId]?.native?.symbol || "ETH";
+    let gasNative = 0;
+    let gasUsd = 0;
+    let estGasCost = ethers.BigNumber.from(0);
+    let gasPrice = null;
+
+    try {
+      const feeData = await getReadProvider().getFeeData();
+      if (feeData.gasPrice) {
+        const min = currentChainId === 1
+          ? ethers.utils.parseUnits("1.5", "gwei")
+          : ethers.utils.parseUnits("0.1", "gwei");
+        gasPrice = feeData.gasPrice.mul(120).div(100);
+        if (gasPrice.lt(min)) gasPrice = min;
+      } else {
+        gasPrice = feeData.maxFeePerGas || ethers.utils.parseUnits("30", "gwei");
+      }
+
+      const gasLimit = quote.transaction?.gas
+        ? ethers.BigNumber.from(quote.transaction.gas)
+        : ethers.BigNumber.from(300000);
+
+      estGasCost = gasPrice.mul(gasLimit);
+      gasNative = parseFloat(ethers.utils.formatEther(estGasCost));
+      const nativePrice = prices[WRAPPED_NATIVE.toLowerCase()] || 0;
+      gasUsd = gasNative * nativePrice;
+
+      if (gasEl) {
+        gasEl.textContent = nativePrice
+          ? `${gasNative.toFixed(6)} ${nativeSymbol} ($${gasUsd.toFixed(2)})`
+          : `${gasNative.toFixed(6)} ${nativeSymbol}`;
+      }
+    } catch (e) {
+      if (gasEl) gasEl.textContent = "-";
+    }
+
+    // ---- 8. Insufficient gas warning ----
+    if (signer && estGasCost.gt(0)) {
+      try {
+        const nativeBal = await getReadProvider().getBalance(user);
+        const isNativeSell = selectedSellToken.address.toLowerCase() === WRAPPED_NATIVE.toLowerCase();
+
+        let required = estGasCost;
+        if (isNativeSell) {
+          const sellWei = ethers.utils.parseUnits(sellAmount, sellDecimals);
+          required = sellWei.add(estGasCost);
+        }
+
+        if (nativeBal.lt(required)) {
+          const shortBy = required.sub(nativeBal);
+          const shortEth = ethers.utils.formatEther(shortBy);
+          const nativePrice = prices[WRAPPED_NATIVE.toLowerCase()] || 0;
+          const shortUsd = nativePrice ? (parseFloat(shortEth) * nativePrice).toFixed(2) : "?";
+
+          const warn = document.createElement("div");
+          warn.id = "gasWarning";
+          warn.className = "rc-status error";
+          warn.style.marginTop = "12px";
+          warn.style.textAlign = "left";
+          warn.innerHTML = `
+            <strong>Insufficient ${nativeSymbol} for gas</strong><br>
+            Your balance: ${ethers.utils.formatEther(nativeBal)} ${nativeSymbol}<br>
+            Required: ${ethers.utils.formatEther(required)} ${nativeSymbol}<br>
+            Short by: ${shortEth} ${nativeSymbol}${nativePrice ? ` (~$${shortUsd})` : ""}
+          `;
+
+          if (swapBtn && swapBtn.parentNode) {
+            swapBtn.parentNode.insertBefore(warn, swapBtn);
+          }
+        }
+      } catch (_) {}
+    }
+
+  } catch (e) {
+    console.warn("[quote] failed:", e.message);
+    buyAmountEl.value = "";
+    currentQuote = null;
+
+    // Show quote error briefly
+    const errEl = document.getElementById("quoteError");
+    if (errEl) errEl.remove();
+
+    const errBox = document.createElement("div");
+    errBox.id = "quoteError";
+    errBox.className = "rc-status error";
+    errBox.style.marginTop = "12px";
+    errBox.textContent = "No quote available: " + (e.message || "unknown");
+    if (swapBtn && swapBtn.parentNode) {
+      swapBtn.parentNode.insertBefore(errBox, swapBtn);
+    }
+  }
 }
 
 async function executeSwap() {
@@ -594,47 +734,69 @@ async function executeSwap() {
   const q = currentQuote;
 
   try {
+    const user = await signer.getAddress();
     const isNative = selectedSellToken.address.toLowerCase() === WRAPPED_NATIVE.toLowerCase();
+    const nativeSymbol = CHAINS[currentChainId]?.native?.symbol || "ETH";
 
-    // 1. Handle approval if needed
+    // ---- PRE-FLIGHT: check native balance vs estimated gas ----
+    const nativeBal = await getReadProvider().getBalance(user);
+    const feeData = await getReadProvider().getFeeData();
+    let gasPrice;
+    if (feeData.gasPrice) {
+      const min = currentChainId === 1 ? ethers.utils.parseUnits("1.5", "gwei") : ethers.utils.parseUnits("0.1", "gwei");
+      gasPrice = feeData.gasPrice.mul(120).div(100);
+      if (gasPrice.lt(min)) gasPrice = min;
+    } else {
+      gasPrice = feeData.maxFeePerGas || ethers.utils.parseUnits("30", "gwei");
+    }
+
+    const gasLimit = q.transaction.gas ? ethers.BigNumber.from(q.transaction.gas) : ethers.BigNumber.from(300000);
+    const estGasCost = gasPrice.mul(gasLimit);
+
+    // If selling native, need balance >= (sell amount + gas)
+    let required = estGasCost;
+    if (isNative) {
+      const sellWei = ethers.utils.parseUnits(
+        document.getElementById("sellAmount").value,
+        selectedSellToken.decimals ?? 18
+      );
+      required = sellWei.add(estGasCost);
+    }
+
+    if (nativeBal.lt(required)) {
+      const shortBy = required.sub(nativeBal);
+      const shortEth = ethers.utils.formatEther(shortBy);
+      const shortUsd = (parseFloat(shortEth) * 2580).toFixed(2);
+      alert(
+        `Not enough ${nativeSymbol} for gas.\n\n` +
+        `Your balance: ${ethers.utils.formatEther(nativeBal)} ${nativeSymbol}\n` +
+        `Required: ${ethers.utils.formatEther(required)} ${nativeSymbol}\n` +
+        `Short by: ${shortEth} ${nativeSymbol} (~$${shortUsd})\n\n` +
+        `Add more ${nativeSymbol} to your wallet to continue.`
+      );
+      return;
+    }
+
+    // ---- Approval if needed ----
     if (!isNative && q.issues?.allowance) {
       const c = new ethers.Contract(selectedSellToken.address, ERC20_ABI, signer);
       const t = await c.approve(q.allowanceTarget, ethers.constants.MaxUint256);
       await t.wait();
     }
 
-    // 2. Get current network gas price and add a buffer
-    const feeData = await getReadProvider().getFeeData();
-    let gasPrice;
-    if (feeData.gasPrice) {
-      // Add 20% buffer, minimum 1.5 gwei on mainnet
-      const min = currentChainId === 1 ? ethers.utils.parseUnits("1.5", "gwei") : ethers.utils.parseUnits("0.1", "gwei");
-      gasPrice = feeData.gasPrice.mul(120).div(100);
-      if (gasPrice.lt(min)) gasPrice = min;
-    } else {
-      // EIP-1559 chain
-      const maxFee = feeData.maxFeePerGas ? feeData.maxFeePerGas.mul(120).div(100) : ethers.utils.parseUnits("30", "gwei");
-      const maxPriority = feeData.maxPriorityFeePerGas ? feeData.maxPriorityFeePerGas.mul(120).div(100) : ethers.utils.parseUnits("1.5", "gwei");
-      gasPrice = null;
-    }
-
-    console.log("[swap] network gasPrice:", gasPrice ? ethers.utils.formatUnits(gasPrice, "gwei") + " gwei" : "EIP-1559");
-
-    // 3. Build the transaction with our own gas price
+    // ---- Send the swap ----
     const txRequest = {
       to: q.transaction.to,
       data: q.transaction.data,
       value: q.transaction.value || "0x0",
-      gasLimit: q.transaction.gas ? ethers.BigNumber.from(q.transaction.gas) : ethers.BigNumber.from(300000),
+      gasLimit: gasLimit,
     };
-    if (gasPrice) txRequest.gasPrice = gasPrice;
+    if (feeData.gasPrice) txRequest.gasPrice = gasPrice;
     if (feeData.maxFeePerGas) txRequest.maxFeePerGas = feeData.maxFeePerGas.mul(120).div(100);
     if (feeData.maxPriorityFeePerGas) txRequest.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas.mul(120).div(100);
 
-    // 4. Send it
     const tx = await signer.sendTransaction(txRequest);
-    console.log("[swap] tx sent:", tx.hash);
-    alert("Transaction sent: " + tx.hash.slice(0, 12) + "…");
+    console.log("[swap] sent:", tx.hash);
     await tx.wait();
     alert("✅ Swap complete!");
     fetchBalances();
